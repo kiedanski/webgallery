@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 WebGallery contributors
 package com.webgallery.ui.settings
 
 import androidx.lifecycle.ViewModel

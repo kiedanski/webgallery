@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 WebGallery contributors
 package com.webgallery.data
 
 import com.webgallery.data.cache.ImageCacheManager
@@ -218,6 +220,7 @@ class PhotoRepository(
         val total = pending.size
         val counter = AtomicInteger(0)
         val semaphore = Semaphore(4)
+        val diskFull = java.util.concurrent.atomic.AtomicBoolean(false)
 
         _syncStatus.value = SyncStatus.Syncing(0, total)
 
@@ -225,11 +228,18 @@ class PhotoRepository(
             async {
                 semaphore.withPermit {
                     if (!currentCoroutineContext().isActive) return@withPermit
+                    if (diskFull.get()) return@withPermit
                     val filename = entity.remoteThumbnailPath.substringAfterLast('/')
                     val target = thumbnailStore.getThumbnailFile(entity.year, entity.month, filename)
                     val res = webDavClient.downloadFile("/dav/photos/${entity.remoteThumbnailPath}", target)
                     if (res.isSuccess) {
                         photoDao.updateThumbnailDownloaded(entity.id, true, target.absolutePath)
+                    } else {
+                        val err = res.exceptionOrNull()
+                        if (err is IOException && (err.message?.contains("No space", ignoreCase = true) == true ||
+                                err.cause?.message?.contains("No space", ignoreCase = true) == true)) {
+                            diskFull.set(true)
+                        }
                     }
                     val current = counter.incrementAndGet()
                     _syncStatus.value = SyncStatus.Syncing(current, total)
@@ -237,6 +247,10 @@ class PhotoRepository(
             }
         }
         jobs.awaitAll()
+
+        if (diskFull.get()) {
+            _syncStatus.value = SyncStatus.Error("Storage full — free up space and try again")
+        }
     }
 
     suspend fun ensureFullImage(

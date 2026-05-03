@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 WebGallery contributors
 package com.webgallery.ui.video
 
 import androidx.activity.compose.BackHandler
@@ -84,6 +86,7 @@ fun VideoPlayerScreen(
     val photo by viewModel.photo.collectAsStateWithLifecycle()
     val isBuffering by viewModel.isBuffering.collectAsStateWithLifecycle()
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val playbackError by viewModel.playbackError.collectAsStateWithLifecycle()
 
     var barsVisible by remember { mutableStateOf(true) }
     LaunchedEffect(barsVisible) {
@@ -115,9 +118,19 @@ fun VideoPlayerScreen(
             )
         }
 
-        if (isBuffering) {
+        if (isBuffering && !playbackError) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Color.White, modifier = Modifier.size(48.dp))
+            }
+        }
+
+        if (playbackError && currentPhoto?.localFavoritePath == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "Video not available offline",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
         }
 

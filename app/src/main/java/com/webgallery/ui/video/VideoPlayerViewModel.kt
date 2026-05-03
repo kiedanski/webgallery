@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 WebGallery contributors
 package com.webgallery.ui.video
 
 import android.content.Context
@@ -5,6 +7,7 @@ import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -45,6 +48,9 @@ class VideoPlayerViewModel(
     private val _downloadProgress = MutableStateFlow<Float?>(null)
     val downloadProgress: StateFlow<Float?> = _downloadProgress.asStateFlow()
 
+    private val _playbackError = MutableStateFlow(false)
+    val playbackError: StateFlow<Boolean> = _playbackError.asStateFlow()
+
     private var player: ExoPlayer? = null
 
     fun setPhoto(id: Long) {
@@ -55,6 +61,7 @@ class VideoPlayerViewModel(
     @androidx.annotation.OptIn(UnstableApi::class)
     fun buildPlayer(context: Context, photo: PhotoEntity): ExoPlayer {
         releasePlayer()
+        _playbackError.value = false
         val factory: DataSource.Factory = OkHttpDataSource.Factory(okHttpClient)
         val mediaSourceFactory = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, factory))
         val mediaUri: String = photo.localFavoritePath?.let { File(it) }
@@ -73,6 +80,10 @@ class VideoPlayerViewModel(
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         _isBuffering.value = playbackState == Player.STATE_BUFFERING
+                    }
+                    override fun onPlayerError(error: PlaybackException) {
+                        _playbackError.value = true
+                        _isBuffering.value = false
                     }
                 })
             }

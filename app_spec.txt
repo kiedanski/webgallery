@@ -1,0 +1,1552 @@
+<project_specification>
+  <project_name>WebGallery — F-Droid Photo Gallery for Tilde WebDAV</project_name>
+
+  <overview>
+    WebGallery is a minimal, F-Droid-compatible Android gallery app that displays photos and videos
+    served from a Tilde personal cloud server via WebDAV. The app downloads all 256px WebP thumbnails
+    for offline grid browsing, caches opened full-resolution images with a configurable LRU cache, and
+    supports marking photos/videos as favorites for permanent offline access. V0 shows only server
+    content — no local device photos.
+
+    Tilde (https://github.com/user/tilde) organizes photos by year/month under /dav/photos/, generates
+    256px square-crop WebP thumbnails accessible via symlinks at _thumbnails/{year}/{month}/{filename}.webp,
+    and serves originals at {year}/{month}/{original_filename}. Authentication is HTTP Basic Auth
+    (username + password). The app discovers content via standard WebDAV PROPFIND operations.
+
+    Design goals: minimal APK size (&lt;15 MB), low memory footprint (&lt;200 MB during browsing),
+    offline-first thumbnail browsing, and clean Material 3 UI with dark mode support.
+  </overview>
+
+  <technology_stack>
+    <language>Kotlin 2.0+ (JVM target 17)</language>
+    <ui_framework>Jetpack Compose with Material 3</ui_framework>
+    <min_sdk>API 26 (Android 8.0 Oreo)</min_sdk>
+    <target_sdk>API 35</target_sdk>
+    <compile_sdk>35</compile_sdk>
+    <build_system>Gradle with Kotlin DSL, version catalog (libs.versions.toml)</build_system>
+    <application_id>com.webgallery</application_id>
+
+    <dependencies>
+      <compose>
+        - androidx.compose:compose-bom (latest stable) — version alignment for all Compose libs
+        - androidx.compose.material3:material3 — Material 3 components
+        - androidx.compose.ui:ui — Core Compose UI
+        - androidx.compose.ui:ui-tooling-preview — Preview support
+        - androidx.compose.foundation:foundation — LazyVerticalStaggeredGrid, HorizontalPager
+        - androidx.activity:activity-compose — ComponentActivity integration
+        - androidx.navigation:navigation-compose — Type-safe screen navigation
+        - androidx.lifecycle:lifecycle-viewmodel-compose — ViewModel in Compose
+        - androidx.lifecycle:lifecycle-runtime-compose — collectAsStateWithLifecycle
+      </compose>
+
+      <http>
+        - com.squareup.okhttp3:okhttp — HTTP client for all WebDAV and file download operations
+      </http>
+
+      <image_loading>
+        - io.coil-kt.coil3:coil-compose — Image loading with memory cache, Compose integration
+        - io.coil-kt.coil3:coil-network-okhttp — OkHttp backend for Coil network requests
+      </image_loading>
+
+      <video>
+        - androidx.media3:media3-exoplayer — Video playback engine
+        - androidx.media3:media3-ui-compose — Compose-compatible player surface and controls
+        - androidx.media3:media3-datasource-okhttp — OkHttp DataSource for authenticated video streaming
+      </video>
+
+      <storage>
+        - androidx.room:room-runtime — SQLite ORM for photo metadata and sync state
+        - androidx.room:room-ktx — Coroutine extensions (suspend DAO methods, Flow queries)
+        - androidx.room:room-compiler (KSP processor) — Compile-time code generation
+        - androidx.datastore:datastore-preferences — Key-value settings storage
+      </storage>
+
+      <security>
+        - androidx.security:security-crypto — EncryptedSharedPreferences for credential storage
+      </security>
+
+      <not_included>
+        - No Retrofit — WebDAV is done via raw OkHttp + XmlPullParser
+        - No Hilt/Dagger — manual dependency injection via AppContainer singleton
+        - No Sardine or other WebDAV library — custom lightweight implementation
+        - No Kotlin Serialization / Moshi / Gson — Android built-in XmlPullParser for WebDAV XML, org.json.JSONObject for health check JSON
+        - No Glide — Coil is lighter and Compose-native
+        - No WorkManager — sync runs on app open only, no background jobs
+      </not_included>
+    </dependencies>
+
+    <license>GPLv3 (compatible with Tilde's AGPL-3.0, standard F-Droid license)</license>
+
+    <fdroid_requirements>
+      - Zero proprietary Google Play Services dependencies
+      - Zero Firebase or Google analytics
+      - Zero non-free network service dependencies
+      - Reproducible builds via Gradle (no timestamps in APK)
+      - fastlane/metadata/ directory structure for F-Droid store listing
+    </fdroid_requirements>
+
+    <credentials>
+      All credentials are entered by the user in the app's setup screen at runtime and stored
+      in EncryptedSharedPreferences on the device. There are no build-time API keys, no .env
+      files, and no external service accounts.
+
+      Runtime credentials (entered by user):
+      - Server URL: Base URL of the Tilde server (e.g., https://tilde.example.com)
+      - Username: HTTP Basic Auth username
+      - Password: HTTP Basic Auth password
+    </credentials>
+  </technology_stack>
+
+  <prerequisites>
+    <build_environment>
+      - Android Studio Ladybug (2024.2) or later, or command-line Gradle
+      - JDK 17+
+      - Android SDK with API 35 build tools
+      - An Android device or emulator running API 26+
+    </build_environment>
+
+    <server_requirements>
+      - A running Tilde server instance accessible over HTTPS (or HTTP for local dev)
+      - At least one photo uploaded and thumbnails generated
+      - Valid user credentials with access to /dav/photos/
+    </server_requirements>
+  </prerequisites>
+
+  <architecture>
+    <pattern>MVVM with unidirectional data flow (ViewModel → StateFlow → Compose UI)</pattern>
+
+    <di_strategy>
+      Manual constructor injection via AppContainer singleton. AppContainer is created in
+      WebGalleryApp.onCreate() and holds all repository, client, and database instances.
+      ViewModels receive dependencies via a custom ViewModelFactory.
+    </di_strategy>
+
+    <concurrency>
+      Kotlin Coroutines throughout. Sync operations run on Dispatchers.IO. UI state is
+      exposed via StateFlow and collected with collectAsStateWithLifecycle. Room queries
+      return Flow for reactive updates.
+    </concurrency>
+
+    <package_structure>
+      com.webgallery/
+      ├── WebGalleryApp.kt                — Application class, creates AppContainer
+      ├── MainActivity.kt                  — Single Activity, sets Compose content
+      ├── AppContainer.kt                  — Manual DI: builds OkHttpClient, DB, repos, stores
+      ├── data/
+      │   ├── webdav/
+      │   │   ├── WebDavClient.kt          — PROPFIND + GET via OkHttp, returns DavResource lists
+      │   │   ├── WebDavParser.kt          — XmlPullParser for DAV:multistatus responses
+      │   │   └── DavResource.kt           — Data class: href, isCollection, contentType, contentLength, etag, lastModified
+      │   ├── db/
+      │   │   ├── AppDatabase.kt           — Room @Database, version 1, entities: PhotoEntity, SyncStateEntity
+      │   │   ├── PhotoEntity.kt           — Room @Entity for photos table
+      │   │   ├── PhotoDao.kt              — Room @Dao with all photo queries
+      │   │   ├── SyncStateEntity.kt       — Room @Entity for sync_state table
+      │   │   └── SyncStateDao.kt          — Room @Dao for sync state queries
+      │   ├── cache/
+      │   │   ├── ThumbnailStore.kt        — Downloads thumbnails to cacheDir, tracks paths
+      │   │   └── ImageCacheManager.kt     — LRU full-image cache: save, get, evict, size accounting
+      │   ├── CredentialStore.kt           — EncryptedSharedPreferences: save/load/clear server config
+      │   ├── SettingsRepository.kt        — DataStore: cache limit, theme mode, setup complete flag
+      │   └── PhotoRepository.kt           — Orchestrates sync, caching, DB access, favorite management
+      ├── model/
+      │   ├── Photo.kt                     — Domain model mapped from PhotoEntity
+      │   ├── MediaType.kt                 — Enum: PHOTO, VIDEO
+      │   ├── SyncStatus.kt               — Sealed class: Idle, Syncing(current, total), Error(message), Complete
+      │   └── ServerConfig.kt             — Data class: url, username, password
+      ├── ui/
+      │   ├── navigation/
+      │   │   └── NavGraph.kt              — NavHost with all routes, conditional start destination
+      │   ├── setup/
+      │   │   ├── SetupScreen.kt           — Server URL, username, password fields, connect button
+      │   │   └── SetupViewModel.kt        — Connection test, credential persistence
+      │   ├── gallery/
+      │   │   ├── GalleryScreen.kt         — Top bar with sync status, grid content, pull-to-refresh
+      │   │   ├── GalleryViewModel.kt      — Observes photos Flow, triggers sync, exposes SyncStatus
+      │   │   ├── PhotoGrid.kt             — LazyVerticalStaggeredGrid with sticky month headers
+      │   │   └── ThumbnailCard.kt         — Single thumbnail: image, video overlay, favorite overlay
+      │   ├── viewer/
+      │   │   ├── PhotoViewerScreen.kt     — Full-screen immersive viewer with horizontal pager
+      │   │   ├── PhotoViewerViewModel.kt  — Full image loading, favorite toggle, file info
+      │   │   └── ZoomableImage.kt         — Pinch-to-zoom, double-tap zoom, pan gesture composable
+      │   ├── video/
+      │   │   ├── VideoPlayerScreen.kt     — Full-screen ExoPlayer with auth streaming
+      │   │   └── VideoPlayerViewModel.kt  — Player lifecycle, favorite toggle, download progress
+      │   ├── favorites/
+      │   │   ├── FavoritesScreen.kt       — Same grid as gallery, filtered to favorites
+      │   │   └── FavoritesViewModel.kt    — Observes favorite photos from Room
+      │   ├── settings/
+      │   │   ├── SettingsScreen.kt        — Grouped settings: server, cache, appearance, about
+      │   │   └── SettingsViewModel.kt     — Settings read/write, cache size calculation, disconnect
+      │   └── theme/
+      │       ├── Theme.kt                 — Material 3 theme with light/dark/dynamic color
+      │       └── Color.kt                 — Custom color definitions for fallback palette
+      └── util/
+          └── FileUtils.kt                 — formatFileSize(), mimeToMediaType(), filenameWithoutExtension()
+    </package_structure>
+  </architecture>
+
+  <core_features>
+
+    <server_setup>
+      <title>Server Connection Setup</title>
+      <user_flow>
+        1. App launches for the first time (setup_complete = false in DataStore)
+        2. SetupScreen is shown — no bottom navigation bar visible
+        3. User sees:
+           - App icon and name "WebGallery" centered at top
+           - Server URL text field (keyboard type: URI, placeholder: "https://tilde.example.com")
+           - Username text field (keyboard type: text)
+           - Password text field (keyboard type: password, with visibility toggle icon)
+           - "Connect" button (full width, primary filled style)
+        4. User fills in all three fields and taps "Connect"
+        5. Button shows CircularProgressIndicator, all fields become disabled
+        6. App sends PROPFIND to {server_url}/dav/photos/ with Depth: 0 and Basic Auth header
+        7. On HTTP 207 Multi-Status:
+           - Credentials saved to EncryptedSharedPreferences
+           - setup_complete set to true in DataStore
+           - Navigate to GalleryScreen (replaces SetupScreen in back stack)
+           - Initial thumbnail sync begins automatically
+        8. On HTTP 401 Unauthorized:
+           - Show inline error below button: "Invalid username or password"
+           - Re-enable fields and button
+        9. On connection timeout / DNS failure / other network error:
+           - Show inline error: "Cannot reach server. Check the URL and try again."
+           - Re-enable fields and button
+        10. On subsequent app launches: skip SetupScreen, go directly to GalleryScreen
+      </user_flow>
+    </server_setup>
+
+    <thumbnail_sync>
+      <title>Thumbnail Discovery, Download, and Incremental Sync</title>
+      <trigger>Automatically on every app open (after setup). Also triggered by pull-to-refresh.</trigger>
+
+      <sync_algorithm>
+        Phase 1 — Directory Discovery:
+          1. PROPFIND /dav/photos/_thumbnails/ with Depth: 1
+          2. Parse response → extract year directory hrefs (e.g., "2023/", "2024/", "2025/")
+          3. Process years in reverse order (newest first, so recent photos appear quickly)
+          4. For each year: PROPFIND /dav/photos/_thumbnails/{year}/ with Depth: 1
+          5. Parse → extract month directory hrefs (e.g., "01/", "02/", ..., "12/")
+          6. Process months in reverse order within each year
+
+        Phase 2 — Change Detection (per month directory):
+          1. For each {year}/{month}/ pair, look up SyncStateEntity by directory_path
+          2. If SyncStateEntity exists and stored ETag matches the directory ETag from Phase 1: skip this month (no changes)
+          3. If ETag differs, no record exists, or ETag is null: proceed to Phase 3
+
+        Phase 3 — Thumbnail and Original Discovery (per changed month):
+          1. PROPFIND /dav/photos/_thumbnails/{year}/{month}/ with Depth: 1
+             → List of thumbnail files: [{href: "_thumbnails/2024/03/IMG_1234.webp", etag, size, lastModified}, ...]
+          2. PROPFIND /dav/photos/{year}/{month}/ with Depth: 1
+             → List of original files: [{href: "2024/03/IMG_1234.jpg", contentType: "image/jpeg", size: 4500000, etag, lastModified}, ...]
+          3. Match each thumbnail to its original by filename stem:
+             - Thumbnail stem: "IMG_1234" (strip ".webp" from "IMG_1234.webp")
+             - Original stem: "IMG_1234" (strip ".jpg" from "IMG_1234.jpg")
+             - Match when stems are equal
+          4. For matched pairs, determine media_type from original's contentType:
+             - contentType starts with "image/" → MediaType.PHOTO
+             - contentType starts with "video/" → MediaType.VIDEO
+          5. Orphaned thumbnails (no matching original): skip, do not insert into DB
+          6. Originals without thumbnails: skip (thumbnails may not be generated yet)
+
+        Phase 4 — Database Upsert:
+          1. For each matched thumbnail-original pair:
+             - If photo not in DB (by remote_thumbnail_path): INSERT with thumbnail_downloaded = false
+             - If photo already in DB and etag changed: UPDATE etag, file_size, last_modified
+             - If photo already in DB and etag unchanged: no-op
+          2. Photos in DB for this month but no longer found on server: set is_deleted = true
+          3. Update SyncStateEntity for this month directory with new ETag and current timestamp
+
+        Phase 5 — Thumbnail Download:
+          1. Query DB for all photos where thumbnail_downloaded = false AND is_deleted = false
+          2. Download each with bounded concurrency (Semaphore, max 4 parallel downloads):
+             GET /dav/photos/_thumbnails/{year}/{month}/{filename}.webp
+          3. Save to: {context.cacheDir}/thumbnails/{year}/{month}/{filename}.webp
+          4. On success: update PhotoEntity — thumbnail_downloaded = true, local_thumbnail_path = saved absolute path
+          5. On failure (network error): skip, will retry on next sync
+          6. Emit progress via SyncStatus.Syncing(currentCount, totalCount) after each download
+
+        Phase 6 — Completion:
+          1. Set SyncStatus to Complete
+          2. Hide sync indicator after 2-second delay
+      </sync_algorithm>
+
+      <error_handling>
+        - Network error during directory discovery: emit SyncStatus.Error("Sync failed — showing cached photos"), stop sync, show toast
+        - Network error during individual thumbnail download: skip that thumbnail, continue with others
+        - Server returns 401 during sync: emit SyncStatus.Error("Authentication failed"), stop sync
+        - Sync is cancellable: if user navigates away or app is backgrounded, cancel coroutine scope
+      </error_handling>
+
+      <performance_notes>
+        - Process newest months first so the user sees recent photos quickly
+        - Gallery grid updates reactively via Room Flow as thumbnails are downloaded
+        - ETag-based skip means incremental sync of a stable collection completes in seconds
+        - OkHttp connection pooling reuses TCP connections across sequential PROPFIND requests
+      </performance_notes>
+    </thumbnail_sync>
+
+    <gallery_browsing>
+      <title>Photo Gallery Grid</title>
+      <user_flow>
+        1. GalleryScreen displays a vertically scrolling grid of thumbnails
+        2. Photos are grouped into sections by year and month
+        3. Each section has a sticky header: "March 2024 — 142 photos, 3 videos"
+        4. Sections are ordered newest-first (most recent month at top of scroll)
+        5. Grid layout:
+           - 3 columns on phone portrait
+           - 4 columns on phone landscape
+           - 5 columns on tablet (smallest dimension &gt; 600dp)
+           - 2dp spacing between cells
+        6. Each thumbnail cell is a square (1:1 aspect ratio):
+           - Displays cached 256px WebP thumbnail loaded via Coil from local file path
+           - If thumbnail_downloaded = false: show a neutral gray placeholder (surfaceVariant color)
+           - If media_type = VIDEO: semi-transparent dark scrim at bottom-right with white play icon (▶), 24dp
+           - If is_favorite = true: small filled red heart icon at top-right with subtle drop shadow, 16dp
+        7. Tapping a thumbnail:
+           - If media_type = PHOTO: navigate to PhotoViewerScreen with photo ID
+           - If media_type = VIDEO: navigate to VideoPlayerScreen with photo ID
+        8. Scroll position is preserved when returning from viewer
+        9. Pull-to-refresh (SwipeRefresh) triggers a new sync cycle
+        10. Top app bar:
+            - Title: "WebGallery" (left)
+            - Sync indicator (right):
+              - Syncing: small CircularProgressIndicator (16dp) + "Syncing..." text
+              - Offline: cloud-off icon + "Offline" text
+              - Complete: checkmark icon (fades out after 2 seconds)
+              - Error: warning icon + "Sync failed" text (tappable to retry)
+      </user_flow>
+
+      <empty_states>
+        - No photos synced yet AND sync in progress:
+          Centered: CircularProgressIndicator + "Syncing photos from server..." + progress count
+        - No photos synced AND sync complete with 0 results:
+          Centered: image icon + "No photos found on server"
+        - All photos are is_deleted = true:
+          Centered: image icon + "No photos found on server"
+      </empty_states>
+    </gallery_browsing>
+
+    <photo_viewer>
+      <title>Full-Resolution Photo Viewer</title>
+      <user_flow>
+        1. Opens full-screen in immersive mode (system bars hidden)
+        2. Background: solid black
+        3. Immediately displays the cached 256px thumbnail (already local, zero latency)
+        4. Full-resolution loading begins:
+           a. Check if local_full_path is not null AND file exists on disk
+           b. If cached locally: load from disk, crossfade from thumbnail (300ms EaseInOut)
+           c. If not cached: GET /dav/photos/{year}/{month}/{original_filename} with Basic Auth
+              - Stream response to: {context.cacheDir}/fullsize/{year}/{month}/{original_filename}
+              - Update PhotoEntity: local_full_path = saved path
+              - Crossfade from thumbnail to full-resolution
+              - Show small centered spinner while downloading
+        5. After loading full image: run cache size check, evict LRU items if over limit
+        6. Gestures:
+           - Pinch to zoom: min 1.0x, max 5.0x
+           - Double-tap: toggle between 1.0x and 2.0x zoom with animation
+           - Pan: enabled when zoomed &gt; 1.0x, bounded to image edges
+           - Horizontal swipe (when zoom = 1.0x): navigate to previous/next photo in same month
+           - Back gesture / swipe down: close viewer, return to gallery at same scroll position
+        7. HorizontalPager contains all photos from the same month for swipe navigation
+        8. Top bar (semi-transparent black gradient, 60% alpha):
+           - Visibility: hidden by default, appears on single tap, auto-hides after 3 seconds
+           - Left: back arrow icon button
+           - Center: filename (single line, ellipsize middle)
+           - Right: favorite toggle icon button
+             - Not favorited: outlined heart icon (white)
+             - Favorited: filled heart icon (red, #E53935)
+        9. Bottom bar (semi-transparent black gradient, 60% alpha):
+           - Same visibility behavior as top bar
+           - Content: "{width} × {height} · {formatted_size} · {month_name} {day}, {year}"
+           - Example: "4032 × 3024 · 3.2 MB · March 15, 2024"
+           - Resolution and size come from the downloaded full image; show "..." while loading
+        10. Favorite toggle behavior:
+            - Tap heart (unfavorited → favorited):
+              a. Set is_favorite = true in PhotoEntity
+              b. If full image already cached (local_full_path exists):
+                 Copy file to {context.filesDir}/favorites/{year}/{month}/{original_filename}
+              c. If full image not yet cached:
+                 Download to both cache and favorites directories
+              d. Set local_favorite_path in PhotoEntity
+              e. Heart fills red with scale pulse animation (100ms to 1.2x, 100ms back to 1.0x)
+            - Tap heart (favorited → unfavorited):
+              a. Set is_favorite = false in PhotoEntity
+              b. Delete file at local_favorite_path
+              c. Set local_favorite_path = null
+              d. local_full_path (cache copy) remains if it exists — subject to normal LRU eviction
+              e. Heart returns to outline with no animation
+      </user_flow>
+    </photo_viewer>
+
+    <video_player>
+      <title>Video Player</title>
+      <user_flow>
+        1. Opens full-screen in immersive mode
+        2. Background: solid black
+        3. ExoPlayer instance created with OkHttp DataSource factory configured with Basic Auth interceptor
+        4. Media source URL: {server_url}/dav/photos/{year}/{month}/{original_filename}
+        5. If video is favorited and local_favorite_path exists and file exists:
+           Use local file URI as media source instead of network URL
+        6. Auto-play on open (playWhenReady = true)
+        7. Player UI: Media3 default Compose controls
+           - Center: large play/pause button
+           - Bottom: seek bar with elapsed / total time
+        8. Buffering state: CircularProgressIndicator centered over video surface
+        9. Top bar (same semi-transparent pattern as photo viewer):
+           - Appears on tap, auto-hides after 3 seconds
+           - Left: back arrow
+           - Center: filename
+           - Right: favorite toggle (heart icon, same as photo viewer)
+        10. Favorite toggle for videos:
+            - Unfavorited → favorited:
+              a. Set is_favorite = true in PhotoEntity
+              b. Begin background download of full video file to {context.filesDir}/favorites/{year}/{month}/{filename}
+              c. Show download progress in bottom area: "Downloading: 45%" with progress bar
+              d. On download complete: set local_favorite_path, switch ExoPlayer source to local file
+            - Favorited → unfavorited:
+              a. Set is_favorite = false
+              b. Delete local favorite file
+              c. Set local_favorite_path = null
+              d. Switch ExoPlayer back to streaming URL (if currently playing from local)
+        11. Back gesture or back button: release ExoPlayer, return to gallery
+        12. Player lifecycle: ExoPlayer released in DisposableEffect onDispose
+        13. Videos are NOT automatically cached — they only persist locally when favorited
+      </user_flow>
+    </video_player>
+
+    <favorites>
+      <title>Favorites Screen</title>
+      <user_flow>
+        1. Bottom nav destination: heart icon, label "Favorites"
+        2. Shows grid of all photos/videos where is_favorite = true
+        3. Same grid layout as GalleryScreen (same column count, spacing, month grouping)
+        4. All content is available offline:
+           - Thumbnails loaded from local_thumbnail_path
+           - Full images loaded from local_favorite_path
+           - Videos played from local_favorite_path
+        5. Tapping a thumbnail opens PhotoViewerScreen or VideoPlayerScreen
+           - Viewer/player loads from local_favorite_path (no network needed)
+        6. Top app bar:
+           - Title: "Favorites" (left)
+           - Storage summary (right): "1.2 GB" (total size of all files in favorites directory)
+        7. Empty state (no favorites):
+           - Centered vertically:
+             - Outlined heart icon (48dp, onSurfaceVariant color)
+             - "No favorites yet" (titleMedium)
+             - "Tap the heart on any photo to save it offline" (bodyMedium, onSurfaceVariant)
+      </user_flow>
+    </favorites>
+
+    <cache_management>
+      <title>Cache and Storage Management</title>
+
+      <storage_layout>
+        Thumbnails:     {context.cacheDir}/thumbnails/{year}/{month}/{filename}.webp
+        Full-image LRU: {context.cacheDir}/fullsize/{year}/{month}/{original_filename}
+        Favorites:      {context.filesDir}/favorites/{year}/{month}/{original_filename}
+      </storage_layout>
+
+      <thumbnail_cache>
+        - All thumbnails are downloaded and kept indefinitely
+        - NOT subject to LRU eviction
+        - NOT counted against the configurable cache limit
+        - Can be cleared manually from Settings (triggers re-download on next sync)
+        - Typical size: 5–15 KB per thumbnail (256px WebP)
+      </thumbnail_cache>
+
+      <fullsize_cache>
+        - LRU eviction policy based on last-access time
+        - Configurable max size: user selects from presets (200 MB, 500 MB, 1 GB, 2 GB, 5 GB, Unlimited)
+        - Default: 500 MB
+        - After each full-image download: check total fullsize cache size
+        - If over limit: evict least-recently-accessed files until under limit
+        - On eviction: delete file, set local_full_path = null in PhotoEntity
+        - Favorites are stored in a separate directory and never evicted from fullsize cache
+        - Can be cleared manually from Settings
+      </fullsize_cache>
+
+      <favorites_storage>
+        - Permanently stored in context.filesDir (survives cache clearing)
+        - NOT subject to LRU eviction
+        - NOT counted against the configurable cache limit
+        - Removed only when user unfavorites an individual photo/video
+        - No bulk clear — user must unfavorite individually
+      </favorites_storage>
+
+      <cache_accounting>
+        ImageCacheManager tracks:
+        - Total thumbnail cache size (sum of files in thumbnails/ directory tree)
+        - Total fullsize cache size (sum of files in fullsize/ directory tree)
+        - Total favorites size (sum of files in favorites/ directory tree)
+        - Sizes calculated by walking directory trees and summing file lengths
+        - Recalculated on demand (when Settings screen is opened)
+      </cache_accounting>
+    </cache_management>
+
+    <settings>
+      <title>Settings Screen</title>
+      <layout>
+        Scrollable column with grouped sections, each with a section header.
+
+        Section: Server
+          - "Server URL" — display text showing current URL (not editable inline)
+          - "Username" — display text showing current username
+          - "Disconnect" — TextButton in error color, shows confirmation AlertDialog:
+            Title: "Disconnect from server?"
+            Message: "This will delete all cached photos and favorites from this device."
+            Confirm: "Disconnect" (error color)
+            Dismiss: "Cancel"
+            On confirm: clear EncryptedSharedPreferences, delete all cache and favorites dirs,
+            clear Room DB, set setup_complete = false, navigate to SetupScreen (clear back stack)
+
+        Section: Storage
+          - "Image cache limit" — current value displayed, tappable to show selection dialog:
+            Options: 200 MB, 500 MB (default), 1 GB, 2 GB, 5 GB, Unlimited
+            On change: save to DataStore, immediately trigger eviction if new limit is lower
+          - "Thumbnail cache" — shows size (e.g., "234 MB"), with "Clear" TextButton
+            Clear confirmation: "Clear all downloaded thumbnails? They will re-download on next sync."
+          - "Image cache" — shows "{used} / {limit}" (e.g., "456 / 500 MB"), with "Clear" TextButton
+            Clear confirmation: "Clear cached full-size images? Favorites are not affected."
+          - "Favorites" — shows size (e.g., "1.2 GB"), no clear button (must unfavorite individually)
+
+        Section: Appearance
+          - "Theme" — current value displayed, tappable to show selection dialog:
+            Options: "System default", "Light", "Dark"
+            On change: save to DataStore, theme updates immediately
+
+        Section: About
+          - "Version" — app versionName from BuildConfig
+          - "Source code" — tappable, opens repository URL in browser
+          - "License" — "GPLv3"
+      </layout>
+    </settings>
+
+    <offline_behavior>
+      <title>Offline Mode</title>
+      <behavior>
+        Detection: catch network exceptions from OkHttp during sync; no ConnectivityManager
+        needed — just handle errors gracefully.
+
+        Gallery screen:
+        - All photos with thumbnail_downloaded = true display normally from local files
+        - Sync indicator shows "Offline" with cloud-off icon
+        - Pull-to-refresh attempts sync, shows "Sync failed" on error
+
+        Photo viewer:
+        - If local_full_path exists and file present: loads from disk normally
+        - If local_full_path is null or file missing: shows thumbnail at full screen with
+          overlay text: "Full image not available offline"
+        - Favorite toggle works if full image is already cached (copies from cache to favorites)
+        - Favorite toggle disabled with tooltip if full image not available
+
+        Video player:
+        - If local_favorite_path exists: plays from local file normally
+        - If not favorited and offline: show thumbnail with overlay: "Video not available offline"
+
+        Favorites screen:
+        - Fully functional offline — all content loads from local files
+
+        Reconnection:
+        - On next app foreground with network available: automatic sync resumes
+      </behavior>
+    </offline_behavior>
+
+  </core_features>
+
+  <database_schema>
+    <database_name>webgallery.db</database_name>
+    <database_version>1</database_version>
+    <export_schema>true</export_schema>
+
+    <tables>
+      <photos>
+        Table name: photos
+
+        Columns:
+        - id: Long, PRIMARY KEY, autoGenerate = true
+        - remote_thumbnail_path: String, NOT NULL, UNIQUE
+            Example: "_thumbnails/2024/03/IMG_1234.webp"
+        - remote_original_path: String, NOT NULL
+            Example: "2024/03/IMG_1234.jpg"
+        - year: Int, NOT NULL
+            Extracted from path during sync. Example: 2024
+        - month: Int, NOT NULL
+            Extracted from path during sync. Example: 3
+        - filename_stem: String, NOT NULL
+            Filename without extension. Example: "IMG_1234"
+        - original_extension: String, NOT NULL
+            File extension of original. Example: "jpg", "mp4"
+        - mime_type: String, NOT NULL
+            From WebDAV getcontenttype. Example: "image/jpeg", "video/mp4"
+        - media_type: String, NOT NULL
+            Derived from mime_type: "PHOTO" or "VIDEO"
+        - file_size: Long, NOT NULL, default = 0
+            Original file size in bytes from WebDAV getcontentlength
+        - etag: String, nullable
+            ETag from WebDAV for change detection on the original file
+        - last_modified: String, nullable
+            Last-Modified header value from WebDAV
+        - thumbnail_downloaded: Int (Boolean), NOT NULL, default = 0
+            1 if thumbnail has been downloaded to local storage
+        - local_thumbnail_path: String, nullable
+            Absolute path to cached thumbnail file on device
+        - is_favorite: Int (Boolean), NOT NULL, default = 0
+            1 if user has marked this as a favorite
+        - local_full_path: String, nullable
+            Absolute path to cached full-resolution file (in cacheDir, subject to LRU eviction)
+        - local_favorite_path: String, nullable
+            Absolute path to permanent favorite copy (in filesDir, never evicted)
+        - is_deleted: Int (Boolean), NOT NULL, default = 0
+            1 if the file was removed from the server (soft delete)
+        - created_at: Long, NOT NULL
+            Unix timestamp milliseconds, set on INSERT
+        - updated_at: Long, NOT NULL
+            Unix timestamp milliseconds, updated on every modification
+
+        Indices:
+        - CREATE INDEX idx_photos_year_month ON photos(year, month)
+        - CREATE INDEX idx_photos_is_favorite ON photos(is_favorite)
+        - CREATE INDEX idx_photos_is_deleted ON photos(is_deleted)
+        - CREATE UNIQUE INDEX idx_photos_remote_thumbnail ON photos(remote_thumbnail_path)
+      </photos>
+
+      <sync_state>
+        Table name: sync_state
+
+        Columns:
+        - id: Long, PRIMARY KEY, autoGenerate = true
+        - directory_path: String, NOT NULL, UNIQUE
+            Example: "_thumbnails/2024/03/"
+        - etag: String, nullable
+            Directory ETag from last PROPFIND for change detection
+        - last_synced_at: Long, NOT NULL
+            Unix timestamp milliseconds of last successful sync
+
+        Indices:
+        - CREATE UNIQUE INDEX idx_sync_state_path ON sync_state(directory_path)
+      </sync_state>
+    </tables>
+
+    <room_dao_queries>
+      PhotoDao:
+        - getPhotosByYearMonth(year: Int, month: Int): Flow&lt;List&lt;PhotoEntity&gt;&gt;
+            WHERE is_deleted = 0 AND year = :year AND month = :month ORDER BY filename_stem ASC
+        - getAllYearMonths(): Flow&lt;List&lt;YearMonth&gt;&gt;
+            SELECT DISTINCT year, month FROM photos WHERE is_deleted = 0 ORDER BY year DESC, month DESC
+        - getFavorites(): Flow&lt;List&lt;PhotoEntity&gt;&gt;
+            WHERE is_favorite = 1 AND is_deleted = 0 ORDER BY year DESC, month DESC, filename_stem ASC
+        - getPhotoById(id: Long): Flow&lt;PhotoEntity?&gt;
+        - getPhotosByMonth(year: Int, month: Int): Flow&lt;List&lt;PhotoEntity&gt;&gt;
+            WHERE is_deleted = 0 AND year = :year AND month = :month AND media_type = 'PHOTO' ORDER BY filename_stem ASC
+        - getPhotosAndVideosByMonth(year: Int, month: Int): Flow&lt;List&lt;PhotoEntity&gt;&gt;
+            WHERE is_deleted = 0 AND year = :year AND month = :month ORDER BY filename_stem ASC
+        - getUnsyncedThumbnails(): List&lt;PhotoEntity&gt; (suspend, not Flow)
+            WHERE thumbnail_downloaded = 0 AND is_deleted = 0
+        - getCountByYearMonth(year: Int, month: Int): Flow&lt;PhotoCounts&gt;
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN media_type = 'PHOTO' THEN 1 ELSE 0 END) as photoCount,
+                   SUM(CASE WHEN media_type = 'VIDEO' THEN 1 ELSE 0 END) as videoCount
+            FROM photos WHERE is_deleted = 0 AND year = :year AND month = :month
+        - upsertPhoto(photo: PhotoEntity) (suspend, @Upsert)
+        - updateThumbnailDownloaded(id: Long, downloaded: Boolean, localPath: String?) (suspend)
+        - updateFavorite(id: Long, isFavorite: Boolean, localFavoritePath: String?) (suspend)
+        - updateLocalFullPath(id: Long, localPath: String?) (suspend)
+        - markDeletedByMonth(year: Int, month: Int, keepIds: List&lt;Long&gt;) (suspend)
+            SET is_deleted = 1 WHERE year = :year AND month = :month AND id NOT IN (:keepIds)
+        - deleteAllPhotos() (suspend) — used on disconnect
+
+      SyncStateDao:
+        - getByPath(directoryPath: String): SyncStateEntity? (suspend)
+        - upsert(syncState: SyncStateEntity) (suspend, @Upsert)
+        - deleteAll() (suspend) — used on disconnect
+    </room_dao_queries>
+
+    <datastore_preferences>
+      File: "webgallery_settings" (DataStore preferences file name)
+
+      Keys:
+      - CACHE_LIMIT_BYTES: longPreferencesKey("cache_limit_bytes")
+          Default: 524_288_000L (500 MB)
+          User-selectable values: 209_715_200L (200 MB), 524_288_000L (500 MB),
+          1_073_741_824L (1 GB), 2_147_483_648L (2 GB), 5_368_709_120L (5 GB), Long.MAX_VALUE (Unlimited)
+
+      - THEME_MODE: stringPreferencesKey("theme_mode")
+          Values: "system" (default), "light", "dark"
+
+      - SETUP_COMPLETE: booleanPreferencesKey("setup_complete")
+          Default: false
+
+      - LAST_SYNC_TIMESTAMP: longPreferencesKey("last_sync_timestamp")
+          Unix timestamp millis of last completed full sync. Default: 0
+    </datastore_preferences>
+
+    <encrypted_shared_preferences>
+      File: "webgallery_credentials"
+      Master key: MasterKey.DEFAULT_MASTER_KEY_ALIAS (AES256-GCM)
+
+      Keys:
+      - "server_url": String — full base URL including scheme (e.g., "https://tilde.example.com")
+      - "username": String — HTTP Basic Auth username
+      - "password": String — HTTP Basic Auth password
+    </encrypted_shared_preferences>
+  </database_schema>
+
+  <webdav_operations>
+    <overview>
+      All WebDAV requests target {server_url}/dav/photos/ as the base path.
+      All requests include an Authorization header: "Basic " + Base64(username + ":" + password).
+      The WebDAV client uses OkHttp and parses responses with Android's built-in XmlPullParser.
+    </overview>
+
+    <operations>
+
+      <connection_test>
+        Purpose: Validate server URL and credentials during setup
+        Method: PROPFIND
+        URL: {server_url}/dav/photos/
+        Request headers:
+          - Authorization: Basic {base64_credentials}
+          - Depth: 0
+          - Content-Type: application/xml; charset=utf-8
+        Request body:
+          &lt;?xml version="1.0" encoding="UTF-8"?&gt;
+          &lt;d:propfind xmlns:d="DAV:"&gt;
+            &lt;d:prop&gt;
+              &lt;d:resourcetype/&gt;
+            &lt;/d:prop&gt;
+          &lt;/d:propfind&gt;
+        Expected response: HTTP 207 Multi-Status
+        Error responses:
+          - 401: Invalid credentials
+          - Connection refused / timeout: Server unreachable
+      </connection_test>
+
+      <list_directory>
+        Purpose: Discover directory contents (year dirs, month dirs, files)
+        Method: PROPFIND
+        URL: {server_url}/dav/photos/{path}/
+        Request headers:
+          - Authorization: Basic {base64_credentials}
+          - Depth: 1
+          - Content-Type: application/xml; charset=utf-8
+        Request body:
+          &lt;?xml version="1.0" encoding="UTF-8"?&gt;
+          &lt;d:propfind xmlns:d="DAV:"&gt;
+            &lt;d:prop&gt;
+              &lt;d:displayname/&gt;
+              &lt;d:getcontenttype/&gt;
+              &lt;d:getcontentlength/&gt;
+              &lt;d:getetag/&gt;
+              &lt;d:getlastmodified/&gt;
+              &lt;d:resourcetype/&gt;
+            &lt;/d:prop&gt;
+          &lt;/d:propfind&gt;
+        Expected response: HTTP 207 Multi-Status with DAV:multistatus XML body
+        Parsing rules:
+          - Each &lt;d:response&gt; element represents one resource
+          - First response is always the requested directory itself — skip it
+          - &lt;d:href&gt; contains the resource path (may be relative or absolute)
+          - &lt;d:resourcetype&gt; containing &lt;d:collection/&gt; child → directory
+          - &lt;d:resourcetype/&gt; (empty/self-closing) → file
+          - &lt;d:getcontenttype&gt; → MIME type string (for files only)
+          - &lt;d:getcontentlength&gt; → file size as string, parse to Long
+          - &lt;d:getetag&gt; → ETag string, strip surrounding quotes if present
+          - &lt;d:getlastmodified&gt; → HTTP date string (RFC 7231 format)
+          - Normalize href: strip {server_url}/dav/photos/ prefix to get relative path
+      </list_directory>
+
+      <download_file>
+        Purpose: Download thumbnails, full-resolution images, and videos
+        Method: GET
+        URL: {server_url}/dav/photos/{relative_path}
+        Request headers:
+          - Authorization: Basic {base64_credentials}
+        Expected response: HTTP 200 with binary body
+        Implementation:
+          - Stream response body directly to FileOutputStream (never buffer entire file in memory)
+          - Use OkHttp response.body.source() with Okio buffered sink
+          - Write to a temporary file first, rename to final path on success (atomic write)
+          - Delete temporary file on failure
+          - Report download progress via callback for large files (videos)
+      </download_file>
+
+    </operations>
+
+    <xml_response_format>
+      Example PROPFIND response (Depth: 1 on a month directory):
+
+      &lt;?xml version="1.0" encoding="UTF-8"?&gt;
+      &lt;d:multistatus xmlns:d="DAV:"&gt;
+        &lt;d:response&gt;
+          &lt;d:href&gt;/dav/photos/_thumbnails/2024/03/&lt;/d:href&gt;
+          &lt;d:propstat&gt;
+            &lt;d:prop&gt;
+              &lt;d:resourcetype&gt;&lt;d:collection/&gt;&lt;/d:resourcetype&gt;
+            &lt;/d:prop&gt;
+            &lt;d:status&gt;HTTP/1.1 200 OK&lt;/d:status&gt;
+          &lt;/d:propstat&gt;
+        &lt;/d:response&gt;
+        &lt;d:response&gt;
+          &lt;d:href&gt;/dav/photos/_thumbnails/2024/03/IMG_1234.webp&lt;/d:href&gt;
+          &lt;d:propstat&gt;
+            &lt;d:prop&gt;
+              &lt;d:displayname&gt;IMG_1234.webp&lt;/d:displayname&gt;
+              &lt;d:getcontenttype&gt;image/webp&lt;/d:getcontenttype&gt;
+              &lt;d:getcontentlength&gt;12345&lt;/d:getcontentlength&gt;
+              &lt;d:getetag&gt;"a1b2c3d4"&lt;/d:getetag&gt;
+              &lt;d:getlastmodified&gt;Mon, 01 Mar 2024 12:00:00 GMT&lt;/d:getlastmodified&gt;
+              &lt;d:resourcetype/&gt;
+            &lt;/d:prop&gt;
+            &lt;d:status&gt;HTTP/1.1 200 OK&lt;/d:status&gt;
+          &lt;/d:propstat&gt;
+        &lt;/d:response&gt;
+      &lt;/d:multistatus&gt;
+
+      Parser must handle:
+      - Multiple &lt;d:response&gt; elements
+      - &lt;d:resourcetype&gt; with or without &lt;d:collection&gt; child
+      - Missing or empty properties (nullable fields in DavResource)
+      - Both relative and absolute hrefs
+      - Quoted and unquoted ETags
+      - Namespaced and non-namespaced XML (some servers vary)
+    </xml_response_format>
+  </webdav_operations>
+
+  <navigation_structure>
+    <nav_type>Bottom navigation bar with 3 destinations (Material 3 NavigationBar)</nav_type>
+
+    <destinations>
+      1. Gallery — icon: Icons.Outlined.PhotoLibrary — GalleryScreen (start destination when setup_complete)
+      2. Favorites — icon: Icons.Outlined.Favorite — FavoritesScreen
+      3. Settings — icon: Icons.Outlined.Settings — SettingsScreen
+    </destinations>
+
+    <full_screen_routes>
+      These routes hide the bottom navigation bar:
+      - SetupScreen — shown when setup_complete = false
+      - PhotoViewerScreen(photoId: Long) — immersive photo viewer
+      - VideoPlayerScreen(photoId: Long) — immersive video player
+    </full_screen_routes>
+
+    <navigation_arguments>
+      - PhotoViewerScreen receives: photoId (Long), which is the PhotoEntity.id
+      - VideoPlayerScreen receives: photoId (Long), which is the PhotoEntity.id
+      - Both screens query the PhotoEntity from Room to get paths and metadata
+    </navigation_arguments>
+
+    <start_destination_logic>
+      In NavGraph:
+      - Read setup_complete from DataStore (blocking read on first launch, cached thereafter)
+      - If false: startDestination = SetupScreen route
+      - If true: startDestination = GalleryScreen route (within bottom nav scaffold)
+    </start_destination_logic>
+
+    <back_navigation>
+      - SetupScreen: system back exits app
+      - GalleryScreen: system back exits app
+      - PhotoViewerScreen: back returns to GalleryScreen at same scroll position
+      - VideoPlayerScreen: back returns to GalleryScreen at same scroll position
+      - FavoritesScreen → PhotoViewer/VideoPlayer: back returns to FavoritesScreen
+      - SettingsScreen → Disconnect: clears back stack, navigates to SetupScreen
+    </back_navigation>
+  </navigation_structure>
+
+  <ui_layout>
+
+    <setup_screen>
+      Full-screen, no bottom nav bar. Vertically centered content.
+
+      Layout (top to bottom, centered horizontally, max-width 400dp):
+      - Spacer (weight 0.3)
+      - App icon: 72dp, tinted primary color
+      - "WebGallery" text: headlineMedium, primary color, 8dp below icon
+      - Spacer: 32dp
+      - OutlinedTextField: "Server URL"
+        - keyboardType = Uri
+        - placeholder: "https://tilde.example.com"
+        - singleLine = true
+        - leadingIcon: Icons.Outlined.Cloud
+      - Spacer: 12dp
+      - OutlinedTextField: "Username"
+        - keyboardType = Text
+        - singleLine = true
+        - leadingIcon: Icons.Outlined.Person
+      - Spacer: 12dp
+      - OutlinedTextField: "Password"
+        - keyboardType = Password
+        - visualTransformation: PasswordVisualTransformation (toggleable)
+        - singleLine = true
+        - leadingIcon: Icons.Outlined.Lock
+        - trailingIcon: visibility toggle (Icons.Outlined.Visibility / VisibilityOff)
+      - Spacer: 24dp
+      - Button "Connect" (FilledButton, full width):
+        - Loading state: CircularProgressIndicator (24dp, onPrimary color) replacing text
+        - Disabled when any field is empty or when loading
+      - Spacer: 8dp
+      - Error text area: bodyMedium, error color, centered, hidden when no error
+      - Spacer (weight 0.7)
+    </setup_screen>
+
+    <main_scaffold>
+      Scaffold with bottom NavigationBar visible on Gallery, Favorites, and Settings screens.
+      NavHost fills the content area above the bottom bar.
+    </main_scaffold>
+
+    <gallery_screen_layout>
+      TopAppBar (small, not scrollable):
+        - Title: "WebGallery"
+        - Actions: sync status composable (indicator icon + optional text)
+
+      Content: SwipeRefresh wrapping LazyVerticalStaggeredGrid
+        - Grid cells: StaggeredGridCells.Fixed(columnCount)
+          - columnCount = 3 (portrait phone), 4 (landscape phone), 5 (tablet &gt;600dp width)
+        - horizontalArrangement: spacedBy(2.dp)
+        - verticalItemSpacing: 2.dp
+        - contentPadding: PaddingValues(2.dp)
+
+      Grid content structure:
+        For each (year, month) group in reverse chronological order:
+          - Sticky header item (full span):
+            MonthHeader composable
+          - Photo/video items:
+            ThumbnailCard composable for each photo in that month
+
+      MonthHeader:
+        - Row with padding(horizontal = 16.dp, vertical = 12.dp)
+        - Text: "{MonthName} {Year}" — titleMedium, onSurface
+        - Spacer weight
+        - Text: "{photoCount} photos, {videoCount} videos" — bodySmall, onSurfaceVariant
+        - Background: surface color
+
+      ThumbnailCard:
+        - Box with aspectRatio(1f) and clip(RoundedCornerShape(4.dp))
+        - AsyncImage (Coil) loading from local_thumbnail_path file
+        - ContentScale.Crop
+        - Placeholder: Box filled with surfaceVariant
+        - If media_type = VIDEO:
+          Box(modifier = Modifier.align(BottomEnd).padding(4.dp)):
+            Icon(Icons.Filled.PlayArrow, size 20dp, white, shadow)
+        - If is_favorite = true:
+          Icon(Icons.Filled.Favorite, modifier = Modifier.align(TopEnd).padding(4.dp),
+               size 14dp, tint = Color(0xFFE53935), shadow)
+        - clickable → navigate to viewer/player
+    </gallery_screen_layout>
+
+    <photo_viewer_layout>
+      Full screen, immersive mode (WindowInsetsController: hide system bars, BEHAVIOR_TRANSIENT_BARS_BY_SWIPE)
+      Background: Color.Black
+
+      Content stack (Box):
+        Layer 1: HorizontalPager (pages = photos in current month)
+          Each page: ZoomableImage composable
+            - Displays thumbnail immediately (from local file)
+            - Loads full image in background
+            - Crossfade transition (300ms) when full image ready
+            - Supports: pinch-to-zoom (1x–5x), double-tap (1x↔2x), pan when zoomed
+
+        Layer 2 (top): AnimatedVisibility (visible when bars shown)
+          TopAppBar-like Row with gradient background (Color.Black.copy(alpha = 0.6f)):
+            - IconButton: back arrow (white)
+            - Text: filename (white, bodyLarge, ellipsize middle, weight 1f)
+            - IconButton: heart toggle
+              - Not favorite: Icons.Outlined.FavoriteBorder (white)
+              - Favorite: Icons.Filled.Favorite (Color(0xFFE53935))
+              - Scale animation on toggle: animateFloatAsState 1.0→1.2→1.0 (200ms total)
+
+        Layer 3 (bottom): AnimatedVisibility (visible when bars shown)
+          Row with gradient background:
+            - Text: file info string (white, bodySmall)
+            - Example: "4032 × 3024 · 3.2 MB · March 15, 2024"
+            - While loading: "Loading..."
+
+        Layer 4 (center): if loading full image
+          CircularProgressIndicator (white, 32dp)
+
+      Bar visibility logic:
+        - Tap toggles visibility
+        - On show: start 3-second auto-hide coroutine
+        - On user interaction (zoom, pan): cancel auto-hide, re-arm on next tap
+        - AnimatedVisibility with fadeIn/fadeOut (200ms)
+    </photo_viewer_layout>
+
+    <video_player_layout>
+      Full screen, immersive mode
+      Background: Color.Black
+
+      Content stack (Box):
+        Layer 1: Media3 PlayerSurface (Compose) filling entire screen
+          - AspectRatio maintained (letterbox/pillarbox as needed)
+          - Renders ExoPlayer output
+
+        Layer 2: Media3 default controls overlay
+          - Play/pause (center, large)
+          - Seek bar with time display (bottom)
+          - Controls auto-hide after 3 seconds of no interaction
+
+        Layer 3 (top): AnimatedVisibility
+          Same top bar as photo viewer: back, filename, heart toggle
+
+        Layer 4 (center): if buffering
+          CircularProgressIndicator (white, 48dp)
+
+        Layer 5 (bottom, above seek bar): if favorite download in progress
+          LinearProgressIndicator + "Downloading: {percent}%" text
+    </video_player_layout>
+
+    <favorites_screen_layout>
+      TopAppBar:
+        - Title: "Favorites"
+        - Actions: Text showing total favorites storage size (bodySmall, onSurfaceVariant)
+
+      Content: same LazyVerticalStaggeredGrid as GalleryScreen
+        - Same month grouping, column count, and ThumbnailCard composable
+        - Data source: PhotoDao.getFavorites() Flow
+
+      Empty state (when no favorites):
+        Column centered vertically and horizontally:
+          - Icon: Icons.Outlined.FavoriteBorder, 48dp, onSurfaceVariant
+          - Spacer: 16dp
+          - Text: "No favorites yet" — titleMedium, onSurface
+          - Spacer: 8dp
+          - Text: "Tap the heart on any photo to save it offline" — bodyMedium, onSurfaceVariant, textAlign center
+    </favorites_screen_layout>
+
+    <settings_screen_layout>
+      TopAppBar:
+        - Title: "Settings"
+
+      Content: LazyColumn with grouped items
+
+      Section header style: Text, titleSmall, primary color, padding(start = 16.dp, top = 24.dp, bottom = 8.dp)
+
+      Setting item style: ListItem or custom Row:
+        - headlineContent: setting name (bodyLarge)
+        - supportingContent: current value (bodyMedium, onSurfaceVariant)
+        - trailingContent: action button if applicable
+
+      Layout:
+        Section "Server":
+          - Item: "Server URL" / "{current_url}"
+          - Item: "Username" / "{current_username}"
+          - Item: "Disconnect" — TextButton, error color text
+
+        Section "Storage":
+          - Item: "Image cache limit" / "{current_limit}" — tappable, opens selection dialog
+          - Item: "Thumbnail cache" / "{size}" — trailing: "Clear" TextButton
+          - Item: "Image cache" / "{used} / {limit}" — trailing: "Clear" TextButton
+          - Item: "Favorites" / "{size}" — no action
+
+        Section "Appearance":
+          - Item: "Theme" / "{current_theme}" — tappable, opens selection dialog
+
+        Section "About":
+          - Item: "Version" / "{versionName}"
+          - Item: "Source code" — tappable, opens URL
+          - Item: "License" / "GPLv3"
+    </settings_screen_layout>
+
+  </ui_layout>
+
+  <design_system>
+
+    <theme>
+      Material 3 with dynamic color on Android 12+ (dynamicDarkColorScheme / dynamicLightColorScheme).
+      Falls back to custom color scheme on Android 11 and below.
+      Theme mode controlled by DataStore preference: system (default), light, dark.
+    </theme>
+
+    <color_palette>
+      <light_scheme>
+        primary:           #1B6B3A  (muted forest green)
+        onPrimary:         #FFFFFF
+        primaryContainer:  #A4F4B6
+        onPrimaryContainer:#002109
+        secondary:         #4E6354  (sage green)
+        onSecondary:       #FFFFFF
+        secondaryContainer:#D0E8D4
+        onSecondaryContainer:#0B1F13
+        background:        #FCFDF7  (warm white)
+        onBackground:      #1A1C19
+        surface:           #FCFDF7
+        onSurface:         #1A1C19
+        surfaceVariant:    #DEE5DB  (light sage — used for thumbnail placeholders)
+        onSurfaceVariant:  #424940
+        outline:           #727970
+        error:             #BA1A1A
+        onError:           #FFFFFF
+      </light_scheme>
+
+      <dark_scheme>
+        primary:           #89D89C
+        onPrimary:         #00391A
+        primaryContainer:  #005229
+        onPrimaryContainer:#A4F4B6
+        secondary:         #B7CCB9
+        onSecondary:       #223528
+        secondaryContainer:#384B3E
+        onSecondaryContainer:#D0E8D4
+        background:        #1A1C19
+        onBackground:      #E2E3DD
+        surface:           #1A1C19
+        onSurface:         #E2E3DD
+        surfaceVariant:    #424940
+        onSurfaceVariant:  #C2C9BD
+        outline:           #8C9388
+        error:             #FFB4AB
+        onError:           #690005
+      </dark_scheme>
+
+      <semantic_colors>
+        - Favorite heart: Color(0xFFE53935) — Material Red 600, same in light and dark
+        - Video play overlay icon: Color.White
+        - Video play overlay scrim: Color.Black.copy(alpha = 0.4f)
+        - Photo viewer bars background: Color.Black.copy(alpha = 0.6f)
+        - Photo viewer text: Color.White
+        - Sync complete checkmark: primary color
+        - Offline indicator: onSurfaceVariant color
+      </semantic_colors>
+    </color_palette>
+
+    <typography>
+      Default Material 3 type scale (system font / Roboto). No custom fonts loaded.
+      Key usage:
+      - Screen titles (TopAppBar): titleLarge
+      - Month headers: titleMedium
+      - Setting names: bodyLarge
+      - Setting values: bodyMedium, onSurfaceVariant
+      - Photo info bar (viewer): bodySmall, Color.White
+      - Error messages: bodyMedium, error color
+      - Empty state titles: titleMedium
+      - Empty state descriptions: bodyMedium, onSurfaceVariant
+      - Sync status text: labelMedium
+    </typography>
+
+    <shapes>
+      - Thumbnail cards: RoundedCornerShape(4.dp)
+      - Buttons: default Material 3 (fully rounded)
+      - Dialogs: default Material 3 (RoundedCornerShape(28.dp))
+      - Text fields: default Material 3 OutlinedTextField shape
+    </shapes>
+
+    <spacing>
+      - Thumbnail grid gap: 2.dp
+      - Grid content padding: 2.dp
+      - Month header padding: horizontal 16.dp, vertical 12.dp
+      - Settings item padding: horizontal 16.dp, vertical 12.dp
+      - Setup form field spacing: 12.dp between fields
+      - Section header top padding: 24.dp
+    </spacing>
+
+    <animations>
+      - Thumbnail grid: no entry animation (instant for performance)
+      - Thumbnail → full image: crossfade 300ms EaseInOut
+      - System bars show/hide: fade 200ms
+      - Favorite heart toggle: scale 1.0 → 1.2 → 1.0 over 200ms (spring or keyframe)
+      - Screen transitions: Material 3 default shared axis (via navigation-compose)
+      - Pull-to-refresh: Material 3 default SwipeRefresh animation
+      - Bar auto-hide: cancel auto-hide timer on interaction, restart on next tap
+    </animations>
+
+  </design_system>
+
+  <implementation_steps>
+
+    <step number="1">
+      <title>Project Setup and Build Configuration</title>
+      <tasks>
+        - Create new Android project with application ID com.webgallery
+        - Configure build.gradle.kts with Kotlin DSL
+        - Create gradle/libs.versions.toml version catalog with all dependencies
+        - Set compileSdk = 35, minSdk = 26, targetSdk = 35
+        - Add all dependencies from technology_stack section
+        - Configure Room KSP annotation processing in build.gradle.kts
+        - Create WebGalleryApp : Application class with empty onCreate
+        - Create MainActivity : ComponentActivity with empty setContent {}
+        - Create Theme.kt with light/dark/dynamic color scheme logic
+        - Create Color.kt with custom color definitions from design_system
+        - Verify project compiles and runs showing empty screen on emulator
+      </tasks>
+    </step>
+
+    <step number="2">
+      <title>Data Layer — Room Database, Credentials, Settings</title>
+      <tasks>
+        - Create PhotoEntity with all columns from database_schema, annotated with @Entity("photos")
+        - Create SyncStateEntity with all columns, annotated with @Entity("sync_state")
+        - Create PhotoDao with all queries from room_dao_queries section (use @Query, @Upsert, @Insert)
+        - Create SyncStateDao with getByPath, upsert, deleteAll
+        - Create AppDatabase : RoomDatabase, version 1, entities = [PhotoEntity, SyncStateEntity]
+        - Create CredentialStore class wrapping EncryptedSharedPreferences:
+          fun saveConfig(url: String, username: String, password: String)
+          fun loadConfig(): ServerConfig?
+          fun clear()
+        - Create SettingsRepository wrapping DataStore:
+          val cacheLimitBytes: Flow&lt;Long&gt;
+          val themeMode: Flow&lt;String&gt;
+          val setupComplete: Flow&lt;Boolean&gt;
+          suspend fun setCacheLimit(bytes: Long)
+          suspend fun setThemeMode(mode: String)
+          suspend fun setSetupComplete(complete: Boolean)
+        - Create AppContainer skeleton with database and settings instances
+        - Create data classes: ServerConfig, Photo (domain model), PhotoCounts, YearMonth
+      </tasks>
+    </step>
+
+    <step number="3">
+      <title>WebDAV Client Implementation</title>
+      <tasks>
+        - Create DavResource data class: href (String), isCollection (Boolean), contentType (String?),
+          contentLength (Long?), etag (String?), lastModified (String?), displayName (String?)
+        - Create WebDavParser object:
+          fun parseMultistatus(inputStream: InputStream): List&lt;DavResource&gt;
+          Uses XmlPullParserFactory.newInstance().newPullParser()
+          Handles: d:multistatus → d:response → d:href, d:propstat → d:prop → individual properties
+          Handles d:resourcetype with/without d:collection child
+          Strips surrounding quotes from ETags
+        - Create BasicAuthInterceptor : Interceptor that adds Authorization header to every request
+        - Create WebDavClient class:
+          Constructor: takes baseUrl (String) and OkHttpClient
+          suspend fun propfind(path: String, depth: Int = 1): Result&lt;List&lt;DavResource&gt;&gt;
+          suspend fun downloadFile(remotePath: String, targetFile: File, onProgress: ((Long, Long) -&gt; Unit)? = null): Result&lt;File&gt;
+          suspend fun testConnection(): Result&lt;Boolean&gt;
+          All operations run on Dispatchers.IO
+          Uses OkHttp Call.execute() in withContext(Dispatchers.IO)
+        - Build OkHttpClient in AppContainer with BasicAuthInterceptor, connection timeout 15s, read timeout 30s
+        - Write unit tests for WebDavParser with sample XML strings
+        - Write unit tests for WebDavClient with MockWebServer
+      </tasks>
+    </step>
+
+    <step number="4">
+      <title>Server Setup Screen</title>
+      <tasks>
+        - Create SetupViewModel:
+          private val _uiState = MutableStateFlow(SetupUiState())
+          fun connect(url: String, username: String, password: String)
+            → calls webDavClient.testConnection(), saves credentials on success
+          data class SetupUiState(isLoading, errorMessage, isConnected)
+        - Create SetupScreen composable matching setup_screen layout spec exactly
+        - Implement form validation: all fields required, URL must start with http:// or https://
+        - Implement connection test with loading state (button shows spinner)
+        - Implement error display (inline text below button)
+        - Create NavGraph.kt with conditional start destination:
+          Read setupComplete from DataStore
+          startDestination = if (setupComplete) "gallery" else "setup"
+        - Create main Scaffold with NavigationBar in MainActivity
+        - Wire SetupScreen into NavGraph
+        - Test: can enter credentials and connect to a running Tilde server
+      </tasks>
+    </step>
+
+    <step number="5">
+      <title>Thumbnail Sync Engine</title>
+      <tasks>
+        - Create ThumbnailStore:
+          fun getThumbnailFile(year: Int, month: Int, filename: String): File
+          fun thumbnailExists(year: Int, month: Int, filename: String): Boolean
+          fun deleteThumbnail(localPath: String)
+          fun deleteAllThumbnails()
+          fun calculateTotalSize(): Long
+        - Create PhotoRepository:
+          private val _syncStatus = MutableStateFlow&lt;SyncStatus&gt;(SyncStatus.Idle)
+          val syncStatus: StateFlow&lt;SyncStatus&gt;
+          suspend fun sync(): full sync algorithm from thumbnail_sync spec
+            Phase 1: discover year/month directories via PROPFIND
+            Phase 2: change detection via ETag comparison with SyncStateDao
+            Phase 3: discover thumbnails and originals, match by stem
+            Phase 4: upsert into PhotoDao, soft-delete removed photos
+            Phase 5: download missing thumbnails with Semaphore(4) concurrency
+          fun getPhotosByYearMonth(year, month): Flow from PhotoDao
+          fun getAllYearMonths(): Flow from PhotoDao
+          fun getFavorites(): Flow from PhotoDao
+        - Implement filename stem matching: strip extension, compare case-insensitive
+        - Implement media type derivation: mime_type.startsWith("image/") → PHOTO, "video/" → VIDEO
+        - Implement reverse-chronological processing: sort year/month lists descending
+        - Implement SyncStatus emissions at each phase
+        - Implement cancellation: check isActive in loops, catch CancellationException
+        - Wire PhotoRepository into AppContainer
+        - Test: run sync against Tilde server, verify DB populated, thumbnails downloaded
+      </tasks>
+    </step>
+
+    <step number="6">
+      <title>Gallery Screen</title>
+      <tasks>
+        - Create GalleryViewModel:
+          val yearMonths: StateFlow (from PhotoRepository.getAllYearMonths())
+          fun getPhotosForMonth(year, month): Flow (from PhotoRepository)
+          fun getCountsForMonth(year, month): Flow (from PhotoDao)
+          val syncStatus: StateFlow (from PhotoRepository)
+          fun triggerSync()
+        - Create GalleryScreen composable matching gallery_screen_layout spec
+        - Create PhotoGrid composable:
+          LazyVerticalStaggeredGrid with StaggeredGridCells.Fixed(columnCount)
+          Column count based on LocalConfiguration.current.screenWidthDp
+          Sticky headers via item(span = StaggeredGridItemSpan.FullLine) for each month
+        - Create MonthHeader composable: month name, year, photo count, video count
+        - Create ThumbnailCard composable:
+          AsyncImage loading from model = File(photo.localThumbnailPath)
+          Video play icon overlay (conditional)
+          Favorite heart overlay (conditional)
+          Clickable → navigate to viewer/player based on mediaType
+        - Configure Coil ImageLoader in AppContainer:
+          Disk cache disabled (we manage our own file storage)
+          Memory cache enabled (default Coil memory cache)
+        - Implement pull-to-refresh with Material3 SwipeRefresh or pullRefresh modifier
+        - Implement sync status indicator in top bar
+        - Implement empty states (syncing, no photos)
+        - Wire into NavGraph as bottom nav destination
+        - Test: gallery shows thumbnails grouped by month, scrolls smoothly
+      </tasks>
+    </step>
+
+    <step number="7">
+      <title>Photo Viewer with Zoom and Caching</title>
+      <tasks>
+        - Create ImageCacheManager:
+          fun getCachedFile(year, month, filename): File?
+          suspend fun cacheImage(year, month, filename, download: suspend (File) -&gt; Unit): File
+          suspend fun evictIfNeeded(limitBytes: Long)
+          fun calculateCacheSize(): Long
+          fun clearCache()
+          LRU tracking: use file lastModified timestamp as access time, touch on read
+        - Create ZoomableImage composable:
+          Uses graphicsLayer for scale and offset transforms
+          detectTransformGestures for pinch-to-zoom
+          detectTapGestures for double-tap zoom toggle
+          Animates zoom level changes with animateFloatAsState
+          Clamps pan to image bounds
+        - Create PhotoViewerViewModel:
+          fun loadPhoto(photoId: Long) — loads PhotoEntity, starts full image fetch
+          val photo: StateFlow&lt;Photo?&gt;
+          val fullImageFile: StateFlow&lt;File?&gt;
+          val isLoading: StateFlow&lt;Boolean&gt;
+          val photosInMonth: StateFlow&lt;List&lt;Photo&gt;&gt; — for pager
+          fun toggleFavorite()
+        - Create PhotoViewerScreen composable matching photo_viewer_layout spec:
+          HorizontalPager for swipe between photos in same month
+          Thumbnail shown immediately, crossfade to full image
+          Top/bottom bars with auto-hide (3s timer)
+          Immersive mode via WindowInsetsController in LaunchedEffect
+          Favorite toggle with scale animation
+        - Implement full image download: WebDavClient.downloadFile → ImageCacheManager.cacheImage
+        - Implement favorite toggle: copy cached file to favorites dir, update DB
+        - Wire into NavGraph as full-screen route (hides bottom nav)
+        - Test: open photo, see thumbnail then full image, zoom, swipe between photos, favorite
+      </tasks>
+    </step>
+
+    <step number="8">
+      <title>Video Player</title>
+      <tasks>
+        - Create VideoPlayerViewModel:
+          fun loadVideo(photoId: Long)
+          val photo: StateFlow&lt;Photo?&gt;
+          val isBuffering: StateFlow&lt;Boolean&gt;
+          val downloadProgress: StateFlow&lt;Float?&gt; — null when not downloading
+          fun toggleFavorite() — triggers background download for videos
+          fun getPlayer(): ExoPlayer
+        - Configure ExoPlayer in ViewModel:
+          OkHttpDataSource.Factory with same authenticated OkHttpClient
+          MediaItem from server URL or local favorite file
+          Player.Listener for buffering state
+        - Create VideoPlayerScreen composable matching video_player_layout spec:
+          Media3 PlayerSurface (Compose) for video rendering
+          Default Media3 controls
+          Top bar with back, filename, favorite toggle
+          Buffering indicator
+          Download progress bar when favoriting
+        - Implement favorite download for videos:
+          Background coroutine downloads video via WebDavClient.downloadFile with progress callback
+          On complete: update PhotoEntity.local_favorite_path, switch player to local source
+        - Handle player lifecycle: DisposableEffect releases ExoPlayer
+        - Wire into NavGraph as full-screen route
+        - Test: play video from server, buffer indicator works, favorite downloads video
+      </tasks>
+    </step>
+
+    <step number="9">
+      <title>Favorites Screen</title>
+      <tasks>
+        - Create FavoritesViewModel:
+          val favorites: StateFlow (from PhotoRepository.getFavorites())
+          val totalSize: StateFlow&lt;String&gt; — formatted size of favorites directory
+          fun calculateSize() — walks favorites directory tree
+        - Create FavoritesScreen composable matching favorites_screen_layout spec:
+          Same grid as GalleryScreen (reuse PhotoGrid composable)
+          Top bar with "Favorites" title and size display
+          Empty state with heart icon and instructional text
+        - Navigation from favorites: tapping opens viewer/player with source = "favorites"
+          Viewer/player loads from local_favorite_path instead of server
+        - Wire into NavGraph as bottom nav destination
+        - Test: favorite some photos, verify they appear in Favorites, open from Favorites works offline
+      </tasks>
+    </step>
+
+    <step number="10">
+      <title>Settings Screen</title>
+      <tasks>
+        - Create SettingsViewModel:
+          val serverUrl: StateFlow&lt;String&gt;
+          val username: StateFlow&lt;String&gt;
+          val cacheLimit: StateFlow&lt;Long&gt;
+          val thumbnailCacheSize: StateFlow&lt;String&gt; — formatted
+          val imageCacheSize: StateFlow&lt;String&gt; — formatted
+          val favoritesSize: StateFlow&lt;String&gt; — formatted
+          val themeMode: StateFlow&lt;String&gt;
+          fun setCacheLimit(bytes: Long)
+          fun setThemeMode(mode: String)
+          fun clearThumbnailCache()
+          fun clearImageCache()
+          fun disconnect()
+          fun recalculateSizes() — called when screen appears
+        - Create SettingsScreen composable matching settings_screen_layout spec:
+          Grouped sections: Server, Storage, Appearance, About
+          Selection dialogs for cache limit and theme
+          Confirmation dialogs for clear cache and disconnect
+        - Implement disconnect: clear credentials, clear all caches and DB,
+          set setupComplete = false, navigate to SetupScreen (popUpTo inclusive)
+        - Implement cache clear: delete directory contents, reset DB flags,
+          trigger sync for thumbnail clear
+        - Implement theme change: immediate effect via SettingsRepository → Theme.kt
+        - Wire into NavGraph as bottom nav destination
+        - Test: change cache limit, clear caches, change theme, disconnect and reconnect
+      </tasks>
+    </step>
+
+    <step number="11">
+      <title>Offline Support and Error Handling Polish</title>
+      <tasks>
+        - Implement offline detection in PhotoRepository: catch IOException from OkHttp,
+          emit SyncStatus.Error with appropriate message
+        - Implement offline overlay in PhotoViewerScreen: when no network and no cached full image,
+          show thumbnail with "Full image not available offline" text overlay
+        - Implement offline state in VideoPlayerScreen: when no network and not favorited,
+          show thumbnail with "Video not available offline" text overlay
+        - Implement offline indicator in GalleryScreen top bar
+        - Ensure all Coil image loads use local file paths only (no network URLs in gallery grid)
+        - Add try-catch around all WebDAV operations with user-friendly error messages
+        - Handle edge cases:
+          - Server becomes unreachable mid-sync: stop gracefully, show cached content
+          - Photo deleted on server between sync and open: show "Photo no longer available" toast
+          - Disk full during thumbnail download: show error, stop downloads
+          - Special characters in filenames (spaces, unicode): URL-encode paths in WebDavClient
+        - Test offline: enable airplane mode, verify gallery shows cached thumbnails,
+          favorites work, viewer shows appropriate messages
+      </tasks>
+    </step>
+
+    <step number="12">
+      <title>Performance Optimization and Testing</title>
+      <tasks>
+        - Memory optimization:
+          - Coil memory cache size: set to 1/8 of available memory (Coil default is fine)
+          - Ensure thumbnails are loaded at display size (256px), not upscaled
+          - Verify no bitmap leaks in photo viewer (check with Android Profiler)
+        - Scrolling performance:
+          - Profile gallery grid with 1000+ items — ensure 60fps
+          - Use remember/key correctly in grid items to avoid recomposition
+          - Lazy loading: only compose visible items (LazyVerticalStaggeredGrid handles this)
+        - Sync performance:
+          - Measure initial sync time for 500, 1000, 5000 photos
+          - Verify ETag-based skip works (incremental sync under 5 seconds for no changes)
+          - Verify bounded concurrency (4 parallel downloads max)
+        - APK size:
+          - Enable R8 minification and resource shrinking
+          - Add ProGuard rules for OkHttp, Room, Media3, Coil
+          - Verify APK size under 15 MB
+        - Test on physical devices:
+          - Low-end device (2 GB RAM, API 26)
+          - Modern device (API 34+, dynamic colors)
+          - Tablet (verify column count)
+        - Test dark mode on all screens
+        - Test configuration changes (rotation) — verify state preserved
+      </tasks>
+    </step>
+
+    <step number="13">
+      <title>F-Droid Metadata and Release Preparation</title>
+      <tasks>
+        - Create app launcher icon:
+          Simple gallery/photo icon, Material Design style
+          Adaptive icon with foreground and background layers
+          ic_launcher.xml, ic_launcher_round.xml, mipmap resources
+        - Create fastlane metadata directory structure:
+          fastlane/metadata/android/en-US/
+            full_description.txt — app description for F-Droid listing
+            short_description.txt — one-line summary (max 80 chars)
+            title.txt — "WebGallery"
+            changelogs/1.txt — "Initial release: browse photos from Tilde WebDAV server"
+            images/phoneScreenshots/ — at least 3 screenshots
+        - Create .fdroid.yml if needed (or rely on auto-detection)
+        - Configure signing:
+          Create keystore for release builds
+          signing config in build.gradle.kts (keystore path, passwords via env vars)
+        - Enable reproducible builds:
+          Set android.enableR8.fullMode = true (if compatible)
+          Avoid embedding timestamps
+        - Verify release APK installs and runs correctly on physical device
+        - Create README.md with:
+          - App description and screenshots
+          - Build instructions
+          - Server requirements (Tilde version)
+          - License (GPLv3)
+      </tasks>
+    </step>
+
+  </implementation_steps>
+
+  <success_criteria>
+
+    <functionality>
+      - User connects to Tilde server with URL, username, and password
+      - All thumbnails sync automatically on app open; gallery populates reactively
+      - Incremental sync detects new and deleted photos via ETag comparison
+      - Tapping a photo shows thumbnail immediately, then crossfades to full resolution
+      - Pinch-to-zoom, double-tap zoom, and pan work smoothly in photo viewer
+      - Horizontal swipe navigates between photos in the same month
+      - Videos stream from server with standard play/pause/seek controls
+      - Favoriting a photo saves it permanently for offline access
+      - Favoriting a video downloads it in the background with progress indication
+      - Unfavoriting removes the permanent copy
+      - Cache respects configurable size limit with automatic LRU eviction
+      - Settings allow changing cache limit, theme, and clearing caches
+      - Disconnect clears all local data and returns to setup screen
+    </functionality>
+
+    <offline>
+      - Gallery grid works fully offline with cached thumbnails
+      - Previously viewed (cached) photos open at full resolution offline
+      - Favorited photos and videos work completely offline
+      - Non-cached content shows helpful "not available offline" messages
+      - Sync resumes automatically when connectivity returns
+    </offline>
+
+    <performance>
+      - Gallery grid scrolls at 60fps with 1000+ thumbnails
+      - Initial sync of 1000 photos completes in under 2 minutes
+      - Incremental sync with no changes completes in under 5 seconds
+      - Photo viewer shows thumbnail within 100ms of opening (local file load)
+      - Memory usage stays under 200 MB during normal gallery browsing
+      - APK size under 15 MB
+    </performance>
+
+    <quality>
+      - No crashes on: empty gallery, server unreachable, mid-sync disconnect, disk full
+      - Dark mode renders correctly on all screens
+      - Dynamic colors (Android 12+) integrate properly with custom colors
+      - Credentials stored encrypted via EncryptedSharedPreferences
+      - No credentials logged or exposed in any code path
+      - Handles filenames with spaces, unicode, and special characters
+      - Empty months (0 photos) are not shown in the gallery
+      - Soft-deleted photos are not shown in gallery or favorites
+      - All network operations respect cancellation (no leaked coroutines)
+      - No proprietary dependencies — fully F-Droid compatible
+      - GPLv3 license headers in all source files
+    </quality>
+
+  </success_criteria>
+
+</project_specification>

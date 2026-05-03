@@ -1,0 +1,591 @@
+<project_specification>
+  <project_name>AVU - Asociación Vegana del Uruguay - Member Management Web App</project_name>
+
+  <overview>
+    Build a fully functional clone of the Asociación Vegana del Uruguay (AVU) web app at avu.org.uy.
+    The application serves as the public-facing website and member management platform for a Uruguayan
+    vegan NGO. It combines a clean, mostly-static public site (home, about, FAQ, benefits, contact)
+    with a full membership lifecycle: registration, payment (MercadoPago or wire transfer), benefit
+    access, and email communications. A custom (non-technical-friendly) admin dashboard handles member
+    approval, benefit management, campaign sending, and usage statistics. The site is in Spanish (es-UY),
+    responsive by default, and optimized for mobile. Built with Django + htmx for a snappy, low-JS feel.
+  </overview>
+
+  <technology_stack>
+    <backend>
+      <framework>Django 5.x</framework>
+      <database>PostgreSQL</database>
+      <dynamic_ui>htmx for partial page updates (no full SPA)</dynamic_ui>
+      <payments>MercadoPago SDK (Python) for subscription checkout and webhooks</payments>
+      <pdf_extraction>LlamaCloud LlamaExtract API for wire transfer proof parsing</pdf_extraction>
+      <email>Resend (free tier: 3000 emails/month) via resend-python SDK</email>
+      <static_files>Whitenoise for serving static files in production</static_files>
+      <maps>Leaflet.js + OpenStreetMap tiles (open source, no API key needed)</maps>
+      <forms>Django forms + crispy-forms for consistent form rendering</forms>
+      <task_queue>None — email sending is synchronous given low volume</task_queue>
+    </backend>
+
+    <frontend>
+      <approach>Server-rendered Django templates with htmx for interactivity</approach>
+      <styling>Tailwind CSS via CDN (no build step needed)</styling>
+      <javascript>htmx + Alpine.js (minimal) for dropdowns and modals</javascript>
+      <icons>Heroicons (inline SVG)</icons>
+    </frontend>
+
+    <infrastructure>
+      <hosting>Railway (PostgreSQL plugin + web service)</hosting>
+      <domain>avu.org.uy (existing domain)</domain>
+      <port>8000</port>
+      <environment>12-factor: all secrets via environment variables</environment>
+    </infrastructure>
+
+    <credentials>
+      <mercadopago>MP_ACCESS_TOKEN and MP_PUBLIC_KEY via environment variables (GitHub Actions secrets exist, values TBD)</mercadopago>
+      <llamacloud>LLAMA_CLOUD_API_KEY via environment variable</llamacloud>
+      <resend>RESEND_API_KEY via environment variable</resend>
+      <contact_email>CONTACT_EMAIL env var — destination for contact form submissions</contact_email>
+      <membership_fee>MEMBERSHIP_FEE_UYU env var, default 50</membership_fee>
+    </credentials>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      - Python 3.12+, pip, virtualenv
+      - PostgreSQL running locally
+      - .env file with all required environment variables
+      - Backend dependencies installed via pip (requirements.txt)
+      - Django migrations applied
+      - Superuser created for initial admin access
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+
+    <public_site>
+      - Home page: hero section, brief about AVU, call-to-action to join
+      - Sobre el Veganismo (About Veganism): educational static content
+      - Preguntas Frecuentes (FAQ): accordion-style Q&amp;A, static
+      - Beneficios (Benefits): grid of partner businesses with discount info; map view for those with addresses
+      - Contacto (Contact): form with name, email, subject, message — submits via backend POST to CONTACT_EMAIL (no mailto:)
+      - Footer: social links (Facebook, Instagram), email, legal info
+      - Navigation: mobile hamburger menu, collapsible on small screens
+    </public_site>
+
+    <membership_registration>
+      - Registration form collects:
+        - Nombre (first name)
+        - Apellido (last name)
+        - Correo electrónico (email, used as login)
+        - Contraseña (password, confirmed)
+        - Cédula de Identidad (stored as plain text, no external validation)
+        - Dirección (street address, city, department)
+        - Teléfono (phone number)
+      - Account created with status = PENDING (inactive, no benefit access)
+      - After registration, user is redirected to payment selection page
+      - One active subscription per user at a time
+      - Users can log in but see a "subscription inactive" banner until paid
+    </membership_registration>
+
+    <payment_flows>
+      <mercadopago>
+        - User selects "Pagar con MercadoPago" on payment page
+        - Django backend creates MercadoPago preference via SDK
+        - User redirected to MercadoPago hosted checkout (redirect flow, works on mobile)
+        - MercadoPago calls webhook on payment success/failure/pending
+        - Webhook endpoint verifies signature, updates subscription status to ACTIVE
+        - Subscription expiry set to 30 days from payment date
+        - Monthly recurring: MercadoPago sends new webhook each billing cycle
+        - On failed renewal: status set to EXPIRED, automated expiry warning email sent
+      </mercadopago>
+
+      <wire_transfer>
+        - User selects "Transferencia bancaria" on payment page
+        - Page shows AVU bank account details (BROU, account number, etc.) and instructions
+        - User fills upload form: full name, amount paid, date of transfer, PDF proof file
+        - PDF uploaded to local media storage (or Railway volume)
+        - LlamaExtract API called to extract: payee name, amount, date from PDF
+        - Extracted data stored alongside original upload for admin review
+        - Submission creates WireTransferRequest with status = PENDING_REVIEW
+        - Admin sees pending requests in dashboard with extracted data + original PDF link
+        - Admin can APPROVE (activates subscription) or REJECT (with optional note sent to user by email)
+      </wire_transfer>
+
+      <activation_code>
+        - Admin can generate single-use alphanumeric activation codes in dashboard
+        - Code can optionally have an expiry date and a note (e.g. "Gift membership - Ana")
+        - User enters code on payment page under "Tengo un código de activación"
+        - Valid unused code: subscription activated immediately, code marked used
+        - Invalid/expired/used code: inline htmx error shown without page reload
+      </activation_code>
+    </payment_flows>
+
+    <subscription_lifecycle>
+      - Statuses: PENDING | ACTIVE | EXPIRED | SUSPENDED
+      - Subscription record tracks: user, payment_method, start_date, expiry_date, status
+      - 7 days before expiry: automated email sent warning of upcoming expiration
+      - On expiry: status set to EXPIRED, benefit access revoked immediately
+      - User can renew from their member dashboard
+      - Renewal creates new subscription record (history preserved)
+    </subscription_lifecycle>
+
+    <member_area>
+      - Accessible only to authenticated users with ACTIVE subscription
+      - Dashboard shows: subscription status, expiry date, payment method, renewal button
+      - Benefits page (same as public but with full discount details visible)
+      - Payment history: list of past subscriptions and payment method used
+      - Profile page: view and edit address, phone, password (cédula not editable after registration)
+    </member_area>
+
+    <benefits_system>
+      - Benefit fields: name, description, discount_details, category, website_url (optional),
+        address (optional), city, latitude, longitude (optional, for map), logo image, is_active
+      - Categories: Restaurante, Tienda, Servicio, Salud, Otro
+      - Public benefits page: grid of active benefits, filterable by category via htmx
+      - Map view tab: Leaflet.js map showing pins for benefits that have coordinates
+      - Clicking a pin shows benefit name + discount in popup
+      - Benefits without addresses appear only in the grid, not on map
+      - Admin can geocode address to lat/lng manually or enter coordinates directly
+    </benefits_system>
+
+    <email_communications>
+      - Admin can compose and send email campaigns to all active members
+      - Compose form: subject, body (rich text via simple textarea with markdown-style help)
+      - Preview rendered email before sending
+      - Send immediately to all active members via Resend API
+      - No scheduling — send now only
+      - Campaign log: list of past campaigns with sent_at, subject, recipient_count
+      - Automated system emails (non-campaign):
+        - Welcome email on registration
+        - Payment confirmation on activation
+        - 7-day expiry warning
+        - Subscription expired notification
+        - Wire transfer rejection email (with admin note)
+        - Wire transfer approval email
+      - All emails sent from a configured FROM address (e.g. socios@avu.org.uy via Resend)
+    </email_communications>
+
+    <contact_form>
+      - Fields: nombre, email, asunto (subject), mensaje (message)
+      - On submit: Django sends email to CONTACT_EMAIL via Resend
+      - htmx: form replaced with success message inline without page reload
+      - Rate-limited: max 3 submissions per IP per hour (Django middleware)
+      - No CAPTCHA required (rate limiting sufficient for low-volume NGO)
+    </contact_form>
+
+    <admin_dashboard>
+      - Separate from Django's built-in admin (which is still available for superusers)
+      - Accessible at /dashboard/ — requires staff user login
+      - Designed for non-technical administrators (clear labels, confirmations, no jargon)
+
+      <stats_overview>
+        - Total active members count
+        - New members this month
+        - Members by payment method (MercadoPago vs Wire Transfer vs Code)
+        - Expiring soon (next 7 days) count
+        - Total revenue estimate this month (active * fee)
+      </stats_overview>
+
+      <member_management>
+        - Paginated member list: name, email, cédula, status, payment method, expiry date
+        - Search by name, email, or cédula
+        - Filter by status (active, pending, expired)
+        - Click member to view full profile and subscription history
+        - Admin can manually change subscription status (with audit log note)
+        - Admin can trigger expiry warning email manually
+      </member_management>
+
+      <wire_transfer_review>
+        - Queue of pending wire transfer requests
+        - Each shows: submitter name, submitted amount, extracted amount (LlamaExtract), date, PDF link
+        - Approve button: activates subscription, sends confirmation email
+        - Reject button: prompts for rejection note, sends rejection email
+        - Approved/rejected history viewable
+      </wire_transfer_review>
+
+      <activation_codes>
+        - Generate new code: optionally set expiry date and internal note
+        - List all codes: code, created_by, expiry, used_by (if used), used_at
+        - Deactivate unused code
+      </activation_codes>
+
+      <benefit_management>
+        - CRUD for benefits (create, edit, deactivate, delete)
+        - Image upload for benefit logo
+        - Address + optional manual lat/lng input
+        - Preview benefit card inline
+        - Toggle active/inactive without deleting
+      </benefit_management>
+
+      <campaign_composer>
+        - Compose email: subject + body textarea
+        - Live preview of rendered email (htmx partial)
+        - Send button with confirmation modal (shows recipient count)
+        - Campaign history list
+      </campaign_composer>
+    </admin_dashboard>
+
+  </core_features>
+
+  <database_schema>
+    <tables>
+      <users>
+        - id, email (unique, used as username), first_name, last_name
+        - cedula (CharField, plain text)
+        - address, city, department, phone
+        - date_joined, last_login
+        - is_active, is_staff (Django defaults)
+        - custom_instructions (not used, but Django AbstractUser compatible)
+      </users>
+
+      <subscriptions>
+        - id, user_id (FK)
+        - status: PENDING | ACTIVE | EXPIRED | SUSPENDED
+        - payment_method: MERCADOPAGO | WIRE_TRANSFER | ACTIVATION_CODE | MANUAL
+        - start_date, expiry_date
+        - mercadopago_subscription_id (nullable)
+        - activation_code_id (FK, nullable)
+        - created_at, updated_at
+      </subscriptions>
+
+      <wire_transfer_requests>
+        - id, user_id (FK)
+        - pdf_file (FileField)
+        - submitted_amount (DecimalField)
+        - submitted_date (DateField)
+        - submitter_name (CharField)
+        - extracted_payee, extracted_amount, extracted_date (from LlamaExtract, nullable)
+        - status: PENDING_REVIEW | APPROVED | REJECTED
+        - reviewed_by (FK to User, nullable)
+        - reviewed_at (nullable)
+        - rejection_note (TextField, nullable)
+        - created_at
+      </wire_transfer_requests>
+
+      <activation_codes>
+        - id, code (CharField, unique, alphanumeric)
+        - created_by (FK to User)
+        - note (CharField, internal only)
+        - expires_at (nullable)
+        - used_by (FK to User, nullable)
+        - used_at (nullable)
+        - is_active (BooleanField)
+        - created_at
+      </activation_codes>
+
+      <benefits>
+        - id, name, description, discount_details
+        - category: RESTAURANTE | TIENDA | SERVICIO | SALUD | OTRO
+        - website_url (nullable)
+        - address, city (nullable)
+        - latitude, longitude (DecimalField, nullable)
+        - logo (ImageField, nullable)
+        - is_active (BooleanField)
+        - created_at, updated_at
+      </benefits>
+
+      <email_campaigns>
+        - id, subject, body
+        - sent_by (FK to User)
+        - sent_at
+        - recipient_count
+      </email_campaigns>
+
+      <contact_submissions>
+        - id, name, email, subject, message
+        - ip_address
+        - created_at
+        - email_sent (BooleanField)
+      </contact_submissions>
+    </tables>
+  </database_schema>
+
+  <url_structure>
+    <public>
+      - GET  /                          → Home
+      - GET  /sobre-el-veganismo/       → About Veganism (static)
+      - GET  /preguntas-frecuentes/     → FAQ (static, accordion via Alpine.js)
+      - GET  /beneficios/               → Benefits grid + map tabs
+      - GET  /contacto/                 → Contact page
+      - POST /contacto/                 → Contact form submission (htmx)
+    </public>
+
+    <auth>
+      - GET/POST /registro/             → Registration form
+      - GET/POST /login/                → Login
+      - POST     /logout/               → Logout
+      - GET/POST /perfil/               → Edit profile (auth required)
+      - GET/POST /cambiar-contrasena/   → Change password
+    </auth>
+
+    <payment>
+      - GET      /pago/                 → Payment method selection (auth required)
+      - POST     /pago/mercadopago/     → Create MP preference, redirect to checkout
+      - POST     /pago/webhook/         → MercadoPago webhook (public, verified by signature)
+      - GET      /pago/exito/           → Post-payment success page
+      - GET      /pago/pendiente/       → Post-payment pending page
+      - GET      /pago/fallo/           → Post-payment failure page
+      - GET/POST /pago/transferencia/   → Wire transfer upload form
+      - POST     /pago/codigo/          → Activate with code (htmx partial)
+    </payment>
+
+    <member_area>
+      - GET /socios/                    → Member dashboard (subscription status, benefits)
+      - GET /socios/historial/          → Payment history
+    </member_area>
+
+    <admin_dashboard>
+      - GET  /dashboard/                → Stats overview
+      - GET  /dashboard/socios/         → Member list
+      - GET  /dashboard/socios/:id/     → Member detail
+      - POST /dashboard/socios/:id/     → Update member status (htmx)
+      - GET  /dashboard/transferencias/ → Wire transfer review queue
+      - POST /dashboard/transferencias/:id/aprobar/  → Approve transfer (htmx)
+      - POST /dashboard/transferencias/:id/rechazar/ → Reject transfer (htmx)
+      - GET  /dashboard/codigos/        → Activation codes list
+      - POST /dashboard/codigos/        → Generate new code (htmx)
+      - POST /dashboard/codigos/:id/desactivar/      → Deactivate code (htmx)
+      - GET  /dashboard/beneficios/     → Benefit CRUD list
+      - GET  /dashboard/beneficios/nuevo/            → New benefit form
+      - POST /dashboard/beneficios/nuevo/            → Create benefit
+      - GET  /dashboard/beneficios/:id/editar/       → Edit benefit form
+      - POST /dashboard/beneficios/:id/editar/       → Update benefit (htmx)
+      - POST /dashboard/beneficios/:id/toggle/       → Toggle active (htmx)
+      - GET  /dashboard/campanas/       → Campaign history + compose form
+      - POST /dashboard/campanas/       → Send campaign
+      - GET  /dashboard/campanas/preview/ → Live email preview (htmx partial)
+    </admin_dashboard>
+  </url_structure>
+
+  <ui_layout>
+    <main_structure>
+      - Single-column layout for public pages; max-w-5xl centered
+      - Sticky top navigation bar: AVU logo/name, nav links, login/registro button
+      - Mobile: hamburger menu (Alpine.js toggle), full-width nav drawer
+      - Footer: consistent across all pages
+    </main_structure>
+
+    <navigation>
+      - Desktop: horizontal nav with links — Inicio, Beneficios, Sobre el Veganismo, FAQ, Contacto
+      - If logged out: "Registrarse" and "Ingresar" buttons (amber/green)
+      - If logged in (inactive): "Mi Cuenta" + warning badge
+      - If logged in (active): "Área de Socios" + avatar/name
+      - If staff: "Dashboard" link added
+    </navigation>
+
+    <public_pages>
+      - Home: full-width hero (green gradient, AVU logo, tagline, CTA button)
+      - Section cards for benefits of joining, how it works (3-step)
+      - Benefits page: category filter chips (htmx), card grid, map tab toggle
+      - FAQ: accordion expand/collapse (Alpine.js, no page reload)
+      - Contact: clean centered form, inline success/error feedback (htmx)
+    </public_pages>
+
+    <member_dashboard>
+      - Card showing subscription status with color badge (green/yellow/red)
+      - Quick action buttons: Renovar, Ver Beneficios, Editar Perfil
+      - If PENDING or EXPIRED: prominent payment CTA banner
+    </member_dashboard>
+
+    <admin_dashboard_layout>
+      - Two-column layout: left sidebar (nav links), right main content
+      - Sidebar links: Resumen, Socios, Transferencias (badge with pending count), Códigos, Beneficios, Campañas de Email
+      - Stats cards at top of Resumen with big numbers
+      - Tables with pagination for lists
+      - Inline htmx actions (approve/reject) update rows without full reload
+      - Toast notifications for action feedback (Alpine.js)
+    </admin_dashboard_layout>
+  </ui_layout>
+
+  <design_system>
+    <color_palette>
+      - Primary: Green (#16a34a, Tailwind green-600) — AVU brand (vegan/nature)
+      - Accent: Amber (#d97706, Tailwind amber-600) — CTAs and highlights
+      - Background: White (#ffffff) light, neutral-50 for page bg
+      - Surface: white cards with neutral-100 borders
+      - Text: neutral-900 primary, neutral-500 secondary
+      - Success: green-100/green-700
+      - Warning: amber-100/amber-700
+      - Error: red-100/red-700
+      - Dark mode: not required (keep it simple for NGO)
+    </color_palette>
+
+    <typography>
+      - Font: system font stack (no external font load — keeps it fast)
+      - Headings: font-bold, tight tracking
+      - Body: text-base (16px), leading-relaxed
+      - Labels: text-sm, font-medium, neutral-700
+      - All text in Spanish (es-UY)
+    </typography>
+
+    <components>
+      <buttons>
+        - Primary: bg-green-600 text-white hover:bg-green-700, rounded-lg px-4 py-2
+        - Secondary: border-green-600 text-green-600 hover:bg-green-50
+        - Danger: bg-red-600 text-white hover:bg-red-700
+        - Disabled: opacity-50 cursor-not-allowed
+      </buttons>
+
+      <forms>
+        - Labels above inputs, error messages below in red-600
+        - Focus ring: ring-2 ring-green-500
+        - Required fields marked with asterisk
+        - crispy-forms with custom Tailwind template pack
+      </forms>
+
+      <status_badges>
+        - ACTIVE: bg-green-100 text-green-800
+        - PENDING: bg-yellow-100 text-yellow-800
+        - EXPIRED: bg-red-100 text-red-800
+        - SUSPENDED: bg-gray-100 text-gray-800
+      </status_badges>
+
+      <cards>
+        - bg-white rounded-xl border border-neutral-200 shadow-sm p-4 to p-6
+        - Hover: shadow-md transition-shadow
+      </cards>
+
+      <map>
+        - Leaflet map, full-width, 400px height on desktop / 250px on mobile
+        - Green circle markers matching brand color
+        - Popup: benefit name + discount snippet + "Ver más" link
+      </map>
+    </components>
+
+    <htmx_patterns>
+      - Form submissions: hx-post + hx-target to swap inline success/error
+      - Filters (benefits category): hx-get + hx-target="#benefits-grid" + hx-trigger="click"
+      - Admin actions (approve/reject): hx-post + hx-swap="outerHTML" on table row
+      - Code validation: hx-post + hx-target="#code-feedback" on input blur
+      - Campaign preview: hx-post + hx-target="#email-preview" on textarea input (debounced)
+      - Loading states: htmx-indicator spinner on all requests
+    </htmx_patterns>
+  </design_system>
+
+  <implementation_steps>
+    <step number="1">
+      <title>Project Foundation</title>
+      <tasks>
+        - Initialize Django project and app structure (avu_app)
+        - Configure PostgreSQL connection, static files (Whitenoise), media files
+        - Set up environment variable loading (python-decouple or django-environ)
+        - Custom User model extending AbstractUser with cedula, address, phone fields
+        - Install and configure: htmx (via CDN in base template), Alpine.js (via CDN), Tailwind CSS (via CDN)
+        - Base template with nav, footer, htmx/Alpine includes
+        - Login, logout, registration views and templates
+        - requirements.txt with all dependencies
+      </tasks>
+    </step>
+
+    <step number="2">
+      <title>Public Site Pages</title>
+      <tasks>
+        - Home page template with hero, how-it-works section, benefits teaser
+        - Sobre el Veganismo static page
+        - FAQ page with Alpine.js accordion
+        - Contact form view + htmx partial response
+        - Email sending via Resend for contact form
+        - Rate limiting middleware for contact form
+        - Responsive navigation with mobile hamburger menu
+        - Footer component
+      </tasks>
+    </step>
+
+    <step number="3">
+      <title>Benefits System</title>
+      <tasks>
+        - Benefit model, migrations, admin registration
+        - Public benefits view: grid + category filter via htmx
+        - Leaflet map tab with JSON endpoint for benefit coordinates
+        - Benefit card component template (reusable)
+        - Seed script with example benefits for development
+      </tasks>
+    </step>
+
+    <step number="4">
+      <title>Membership and Payment Flows</title>
+      <tasks>
+        - Subscription model and lifecycle logic
+        - Payment selection page
+        - MercadoPago integration: create preference, redirect, webhook handler, signature verification
+        - Wire transfer upload form + LlamaExtract PDF parsing integration
+        - Activation code model, generation, and validation view (htmx inline validation)
+        - Post-payment success/pending/failure pages
+        - Member dashboard showing subscription status
+        - Subscription access middleware/mixin (blocks inactive users from member-only views)
+      </tasks>
+    </step>
+
+    <step number="5">
+      <title>Automated Emails</title>
+      <tasks>
+        - Resend integration: email sending service class
+        - Email templates (HTML): welcome, payment confirmation, expiry warning, expired, wire transfer approved/rejected
+        - Django management command: check_expiring_subscriptions (runs daily via Railway cron)
+        - 7-day expiry warning logic
+        - Expiry-on-date logic (marks subscriptions EXPIRED)
+      </tasks>
+    </step>
+
+    <step number="6">
+      <title>Admin Dashboard</title>
+      <tasks>
+        - Staff-only views protected by @staff_required decorator
+        - Stats overview page with member counts and payment method breakdown
+        - Member list with search + filter (htmx-powered)
+        - Member detail with manual status override
+        - Wire transfer review queue: approve/reject with htmx row updates
+        - Activation code generation and management
+        - Benefit CRUD with image upload and coordinate input
+        - Email campaign composer with live preview (htmx) and send
+        - Campaign history list
+        - Sidebar nav layout for dashboard
+      </tasks>
+    </step>
+
+    <step number="7">
+      <title>Polish and Deployment</title>
+      <tasks>
+        - Mobile responsiveness audit across all pages
+        - Form validation error messages in Spanish
+        - CSRF protection on all POST endpoints including htmx
+        - Security: LOGIN_REQUIRED_URLS, SECURE_HSTS, HTTPS enforcement on Railway
+        - railway.toml / Procfile for Railway deployment
+        - Database migration strategy for Railway PostgreSQL
+        - Environment variable documentation
+        - Seed management command for initial data (FAQ, example benefits)
+        - 404 and 500 custom error pages
+      </tasks>
+    </step>
+  </implementation_steps>
+
+  <success_criteria>
+    <functionality>
+      - User can register, pay via MercadoPago, and immediately access benefits
+      - Wire transfer upload triggers LlamaExtract parsing; admin can approve/reject
+      - Activation codes work end-to-end
+      - 7-day expiry warnings sent automatically
+      - Admin dashboard shows accurate live stats
+      - Email campaigns reach all active members via Resend
+      - Contact form sends email without any client-side mailto:
+      - Benefits map shows pins for all geo-coded benefits
+    </functionality>
+
+    <user_experience>
+      - Site loads fast (minimal JS, Whitenoise static, no external fonts)
+      - htmx interactions feel instant (no full page reloads for filters, forms, admin actions)
+      - Mobile layout is clean and usable on small screens
+      - All UI text in Spanish (es-UY)
+      - Non-technical admins can manage members without knowing Django admin
+    </user_experience>
+
+    <technical_quality>
+      - All secrets in environment variables, never in code
+      - MercadoPago webhook signature verified before processing
+      - PDF files stored securely, not publicly listed
+      - PostgreSQL used throughout (no SQLite fallback)
+      - Django's CSRF protection active on all forms including htmx
+      - Subscription access control enforced server-side, not just in templates
+    </technical_quality>
+  </success_criteria>
+
+</project_specification>

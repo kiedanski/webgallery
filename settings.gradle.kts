@@ -20,4 +20,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "WebGallery"
-include(":app")
+include(":app", ":core")

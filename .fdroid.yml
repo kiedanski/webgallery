@@ -1,0 +1,43 @@
+Categories:
+  - Multimedia
+License: GPL-3.0-or-later
+SourceCode: https://github.com/kiedanski/webgallery
+IssueTracker: https://github.com/kiedanski/webgallery/issues
+
+AutoName: WebGallery
+Description: |-
+  WebGallery is a minimal Android gallery app that displays photos and videos
+  served from a Tilde personal cloud server via WebDAV. The app downloads
+  256px thumbnails for offline grid browsing, caches opened full-resolution
+  images with a configurable LRU cache, and supports marking photos and videos
+  as favorites for permanent offline access.
+
+  Features:
+
+  * Offline-first thumbnail browsing
+  * Full-resolution photo viewer with pinch-to-zoom and swipe navigation
+  * Video streaming with auto-play (Media3/ExoPlayer)
+  * Mark photos and videos as favorites for permanent offline access
+  * Configurable LRU cache (200&nbsp;MB to Unlimited)
+  * Material 3 UI with dark mode and dynamic colors
+  * HTTP Basic Auth credentials encrypted with AES-256-GCM
+  * Zero proprietary dependencies, no analytics
+
+RepoType: git
+Repo: https://github.com/kiedanski/webgallery.git
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 1
+    commit: v1.0.0
+    subdir: app
+    gradle:
+      - yes
+    output: build/outputs/apk/release/app-release-unsigned.apk
+    srclibs: []
+    prebuild: ''
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 1.0.0
+CurrentVersionCode: 1

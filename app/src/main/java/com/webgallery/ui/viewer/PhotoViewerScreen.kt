@@ -92,7 +92,7 @@ fun PhotoViewerScreen(
     val initialIndex = photos.indexOfFirst { it.id == initialPhoto?.id }.coerceAtLeast(0)
     val pagerState = rememberPagerState(initialPage = initialIndex, pageCount = { photos.size })
 
-    var barsVisible by remember { mutableStateOf(false) }
+    var barsVisible by remember { mutableStateOf(true) }
     LaunchedEffect(barsVisible) {
         if (barsVisible) {
             delay(3_000)

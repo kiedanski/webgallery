@@ -60,7 +60,15 @@ interface PhotoDao {
     suspend fun updateLocalFullPath(id: Long, localPath: String?, now: Long = System.currentTimeMillis())
 
     @Query("UPDATE photos SET is_deleted = 1, updated_at = :now WHERE year = :year AND month = :month AND id NOT IN (:keepIds)")
-    suspend fun markDeletedByMonth(year: Int, month: Int, keepIds: List<Long>, now: Long = System.currentTimeMillis())
+    suspend fun markDeletedByMonthInternal(year: Int, month: Int, keepIds: List<Long>, now: Long = System.currentTimeMillis())
+
+    @Query("UPDATE photos SET is_deleted = 1, updated_at = :now WHERE year = :year AND month = :month")
+    suspend fun markAllDeletedInMonth(year: Int, month: Int, now: Long = System.currentTimeMillis())
+
+    suspend fun markDeletedByMonth(year: Int, month: Int, keepIds: List<Long>) {
+        if (keepIds.isEmpty()) markAllDeletedInMonth(year, month)
+        else markDeletedByMonthInternal(year, month, keepIds)
+    }
 
     @Query("UPDATE photos SET local_full_path = NULL WHERE local_full_path IS NOT NULL")
     suspend fun clearAllLocalFullPaths()

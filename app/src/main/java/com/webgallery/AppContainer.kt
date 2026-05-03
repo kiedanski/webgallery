@@ -7,6 +7,7 @@ import coil3.ImageLoader
 import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import okio.Path.Companion.toOkioPath
 import com.webgallery.data.CredentialStore
 import com.webgallery.data.PhotoRepository
 import com.webgallery.data.SettingsRepository
@@ -52,7 +53,7 @@ class AppContainer(private val context: Context) {
 
     val imageLoader: ImageLoader = ImageLoader.Builder(context)
         .components {
-            add(OkHttpNetworkFetcherFactory(okHttpClient))
+            add(OkHttpNetworkFetcherFactory(callFactory = { okHttpClient }))
         }
         .memoryCache {
             MemoryCache.Builder()
@@ -61,7 +62,7 @@ class AppContainer(private val context: Context) {
         }
         .diskCache {
             DiskCache.Builder()
-                .directory(context.cacheDir.resolve("coil_disk_cache"))
+                .directory(context.cacheDir.resolve("coil_disk_cache").toOkioPath())
                 .maxSizeBytes(50L * 1024 * 1024)
                 .build()
         }

@@ -62,4 +62,11 @@ class FavoritesViewModel(
             )
         }
     }
+
+    fun toggleFavorite(photo: PhotoEntity) {
+        viewModelScope.launch {
+            repository.toggleFavorite(photo)
+            recalculateSize()
+        }
+    }
 }

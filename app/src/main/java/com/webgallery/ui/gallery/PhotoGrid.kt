@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.webgallery.data.db.PhotoEntity
 import com.webgallery.model.PhotoCounts
 import com.webgallery.model.YearMonth
+
 import com.webgallery.util.FileUtils
 import kotlinx.coroutines.flow.Flow
 
@@ -39,6 +40,7 @@ fun PhotoGrid(
     sections: List<GallerySection>,
     countsFor: (Int, Int) -> Flow<PhotoCounts>,
     onPhotoClick: (Long, Boolean) -> Unit,
+    onPhotoLongPress: (PhotoEntity) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val configuration = LocalConfiguration.current
@@ -77,7 +79,8 @@ fun PhotoGrid(
                     onClick = {
                         val isVideo = photo.mediaType == "VIDEO"
                         onPhotoClick(photo.id, isVideo)
-                    }
+                    },
+                    onLongClick = { onPhotoLongPress(photo) }
                 )
             }
         }

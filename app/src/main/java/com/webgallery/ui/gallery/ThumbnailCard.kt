@@ -2,8 +2,9 @@
 // Copyright (C) 2026 WebGallery contributors
 package com.webgallery.ui.gallery
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,10 +33,12 @@ import com.webgallery.model.MediaType
 import com.webgallery.ui.theme.FavoriteRed
 import java.io.File
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ThumbnailCard(
     photo: PhotoEntity,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isVideo = photo.mediaType == MediaType.VIDEO.name
@@ -50,7 +53,7 @@ fun ThumbnailCard(
             .aspectRatio(1f)
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
         if (photo.thumbnailDownloaded && photo.localThumbnailPath != null) {
             AsyncImage(

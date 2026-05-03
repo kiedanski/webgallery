@@ -31,6 +31,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.webgallery.data.db.PhotoEntity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -49,6 +53,7 @@ fun GalleryScreen(
     val viewModel: GalleryViewModel = viewModel(factory = factory)
     val sections by viewModel.sections.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    var sheetPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
 
     LaunchedEffect(Unit) { viewModel.triggerInitialSync() }
 
@@ -73,10 +78,19 @@ fun GalleryScreen(
                     sections = sections,
                     countsFor = { y, m -> viewModel.getCountsForMonth(y, m) },
                     onPhotoClick = onPhotoClick,
+                    onPhotoLongPress = { sheetPhoto = it },
                     modifier = Modifier.fillMaxSize()
                 )
             }
         }
+    }
+
+    sheetPhoto?.let { photo ->
+        PhotoActionsSheet(
+            photo = photo,
+            onDismiss = { sheetPhoto = null },
+            onToggleFavorite = { viewModel.toggleFavorite(photo) }
+        )
     }
 }
 

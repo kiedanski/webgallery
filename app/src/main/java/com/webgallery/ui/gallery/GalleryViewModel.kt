@@ -61,4 +61,10 @@ class GalleryViewModel(
 
     fun getCountsForMonth(year: Int, month: Int): Flow<PhotoCounts> =
         repository.getCountsByYearMonth(year, month)
+
+    fun toggleFavorite(photo: PhotoEntity) {
+        viewModelScope.launch {
+            repository.toggleFavorite(photo)
+        }
+    }
 }

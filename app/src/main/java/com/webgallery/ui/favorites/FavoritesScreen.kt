@@ -24,9 +24,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.webgallery.data.db.PhotoEntity
 import com.webgallery.ui.AppViewModelFactory
+import com.webgallery.ui.gallery.PhotoActionsSheet
 import com.webgallery.ui.gallery.PhotoGrid
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +43,7 @@ fun FavoritesScreen(
     val viewModel: FavoritesViewModel = viewModel(factory = factory)
     val sections by viewModel.sections.collectAsStateWithLifecycle()
     val totalSize by viewModel.totalSize.collectAsStateWithLifecycle()
+    var sheetPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
 
     LaunchedEffect(Unit) { viewModel.recalculateSize() }
 
@@ -81,8 +87,17 @@ fun FavoritesScreen(
                 sections = sections,
                 countsFor = { y, m -> viewModel.countsFor(y, m) },
                 onPhotoClick = onPhotoClick,
+                onPhotoLongPress = { sheetPhoto = it },
                 modifier = Modifier.fillMaxSize().padding(padding)
             )
         }
+    }
+
+    sheetPhoto?.let { photo ->
+        PhotoActionsSheet(
+            photo = photo,
+            onDismiss = { sheetPhoto = null },
+            onToggleFavorite = { viewModel.toggleFavorite(photo) }
+        )
     }
 }

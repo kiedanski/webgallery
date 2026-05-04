@@ -71,6 +71,10 @@ android {
     }
 }
 
+configurations.implementation {
+    exclude(group = "net.sf.kxml", module = "kxml2")
+}
+
 dependencies {
     implementation(project(":core"))
 

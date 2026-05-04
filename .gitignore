@@ -14,3 +14,5 @@ local.properties
 *.aar
 *.dex
 .kotlin/
+*.keystore
+*.jks

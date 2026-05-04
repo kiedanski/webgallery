@@ -14,3 +14,8 @@ local.properties
 *.aar
 *.dex
 .kotlin/
+
+# Never commit signing material
+*.keystore
+*.jks
+*.keystore.b64

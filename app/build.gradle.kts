@@ -5,6 +5,15 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Release signing config is activated only when KEYSTORE_PASSWORD is provided
+// (typically by GitHub Actions secrets). Local debug builds without those env
+// vars still work — release APKs just come out unsigned.
+val keystorePassword: String? = System.getenv("KEYSTORE_PASSWORD")
+val keyAlias: String? = System.getenv("KEY_ALIAS")
+val keyPassword: String? = System.getenv("KEY_PASSWORD")
+val keystoreFile: String = System.getenv("KEYSTORE_FILE") ?: "release.keystore"
+val signingEnabled = keystorePassword != null && keyAlias != null && keyPassword != null
+
 android {
     namespace = "com.webgallery"
     compileSdk = 35
@@ -24,6 +33,17 @@ android {
         }
     }
 
+    if (signingEnabled) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystoreFile)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -32,6 +52,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (signingEnabled) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isMinifyEnabled = false

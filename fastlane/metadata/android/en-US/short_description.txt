@@ -1,1 +1,1 @@
-Browse photos and videos from a Tilde WebDAV server.
+Companion photo gallery for Tilde — browse thumbnails, view photos and videos over WebDAV.

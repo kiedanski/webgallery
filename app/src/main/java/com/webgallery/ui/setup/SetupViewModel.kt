@@ -13,6 +13,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 class SetupViewModel(
     private val webDavClient: WebDavClient,
@@ -48,7 +52,11 @@ class SetupViewModel(
                 onFailure = { e ->
                     val message = when (e) {
                         is WebDavClient.UnauthorizedException -> "Invalid username or password"
-                        is IOException -> "Cannot reach server. Check the URL and try again."
+                        is UnknownHostException -> "Server not found — check the URL"
+                        is ConnectException -> "Connection refused — is the server running?"
+                        is SocketTimeoutException -> "Connection timed out — server may be unreachable"
+                        is SSLException -> "SSL error — check that the URL and certificate are correct"
+                        is IOException -> e.message ?: "Cannot reach server"
                         else -> e.message ?: "Connection failed"
                     }
                     webDavClient.configure(null)

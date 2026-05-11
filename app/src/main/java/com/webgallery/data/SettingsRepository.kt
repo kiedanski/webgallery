@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "webgallery_settings")
@@ -37,6 +38,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSetupComplete(complete: Boolean) {
         context.dataStore.edit { it[SETUP_COMPLETE] = complete }
+    }
+
+    suspend fun getLastSyncTimestamp(): Long {
+        return context.dataStore.data.map { prefs -> prefs[LAST_SYNC_TIMESTAMP] ?: 0L }.first()
     }
 
     suspend fun setLastSyncTimestamp(timestamp: Long) {

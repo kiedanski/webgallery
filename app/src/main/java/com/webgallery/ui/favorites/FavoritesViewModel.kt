@@ -69,4 +69,16 @@ class FavoritesViewModel(
             recalculateSize()
         }
     }
+
+    fun toggleFlagged(photo: PhotoEntity) {
+        viewModelScope.launch {
+            repository.toggleFlagged(photo)
+        }
+    }
+
+    fun enqueueDelete(photo: PhotoEntity) {
+        viewModelScope.launch {
+            repository.enqueueDelete(photo)
+        }
+    }
 }

@@ -1,13 +1,17 @@
-WebGallery is a minimal, F-Droid-compatible Android gallery app that displays
-photos and videos served from a Tilde personal cloud server via WebDAV.
+WebGallery is a private, self-hosted photo gallery for Android. It connects to your Tilde personal cloud server over WebDAV and gives you a fast, native gallery experience with offline support.
 
 Features:
-- Offline-first thumbnail browsing
+- Offline-first thumbnail browsing with efficient incremental sync
+- Background sync with progress notification — handles 100k+ photo libraries
 - Full-resolution photo viewer with pinch-to-zoom and swipe navigation
 - Video streaming with auto-play
-- Mark photos and videos as favorites for permanent offline access
-- Configurable LRU cache for full-size images
+- Year timeline for fast navigation
+- Mark photos as favorites for permanent offline access
+- Flag photos for inspection with error diagnostics
+- Change photo dates, edit tags, and delete photos
+- Offline mutation queue — edits work without connectivity
+- Auto-upload from Camera, WhatsApp, or any folder
 - Material 3 UI with dark mode and dynamic colors
 - HTTP Basic Auth credentials encrypted with AES-256-GCM
-- Zero proprietary dependencies
+- Zero proprietary dependencies — fully F-Droid compatible
 - GPLv3 licensed

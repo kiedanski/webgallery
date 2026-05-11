@@ -74,6 +74,12 @@ class SettingsViewModel(
         }
     }
 
+    fun forceResync() {
+        viewModelScope.launch {
+            photoRepository.forceSyncStateReset()
+        }
+    }
+
     fun clearThumbnailCache() {
         viewModelScope.launch {
             photoRepository.clearThumbnailCache()

@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.buffer
 import okio.sink
@@ -79,7 +80,7 @@ class WebDavClient(
             try {
                 okHttpClient.newCall(request).execute().use { response ->
                     if (response.code == 401) throw UnauthorizedException()
-                    if (!response.isSuccessful) throw IOException("Download failed: ${response.code}")
+                    if (!response.isSuccessful) throw HttpException(response.code, "Download failed")
                     val body = response.body ?: throw IOException("Empty body")
                     val total = body.contentLength()
                     var read = 0L
@@ -110,6 +111,95 @@ class WebDavClient(
             }
         }
     }
+
+    suspend fun putFile(
+        remotePath: String,
+        sourceFile: File,
+        contentType: String = "application/octet-stream"
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val cfg = config ?: return@withContext Result.failure(IllegalStateException("Not configured"))
+        runCatching {
+            val body = sourceFile.asRequestBody(contentType.toMediaType())
+            val request = Request.Builder()
+                .url(buildUrl(cfg.baseUrl, remotePath))
+                .put(body)
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code == 401) throw UnauthorizedException()
+                if (!response.isSuccessful) throw HttpException(response.code, "PUT failed")
+            }
+        }
+    }
+
+    suspend fun delete(remotePath: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val cfg = config ?: return@withContext Result.failure(IllegalStateException("Not configured"))
+        runCatching {
+            val request = Request.Builder()
+                .url(buildUrl(cfg.baseUrl, remotePath))
+                .delete()
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code == 401) throw UnauthorizedException()
+                if (!response.isSuccessful) throw HttpException(response.code, "DELETE failed")
+            }
+        }
+    }
+
+    suspend fun proppatch(
+        remotePath: String,
+        setProperties: Map<String, String> = emptyMap(),
+        removeProperties: List<String> = emptyList(),
+        namespace: String = WEBGALLERY_NS
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val cfg = config ?: return@withContext Result.failure(IllegalStateException("Not configured"))
+        runCatching {
+            val body = buildProppatchBody(setProperties, removeProperties, namespace)
+            val mediaType = "application/xml; charset=utf-8".toMediaType()
+            val request = Request.Builder()
+                .url(buildUrl(cfg.baseUrl, remotePath))
+                .method("PROPPATCH", body.toRequestBody(mediaType))
+                .header("Content-Type", "application/xml; charset=utf-8")
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code == 401) throw UnauthorizedException()
+                if (response.code !in listOf(200, 207)) throw HttpException(response.code, "PROPPATCH failed")
+            }
+        }
+    }
+
+    private fun buildProppatchBody(
+        setProps: Map<String, String>,
+        removeProps: List<String>,
+        namespace: String
+    ): String {
+        val sb = StringBuilder()
+        sb.append("""<?xml version="1.0" encoding="UTF-8"?>""")
+        sb.append("""<d:propertyupdate xmlns:d="DAV:" xmlns:app="$namespace">""")
+        if (setProps.isNotEmpty()) {
+            sb.append("<d:set><d:prop>")
+            for ((key, value) in setProps) {
+                sb.append("<app:$key>")
+                sb.append(escapeXml(value))
+                sb.append("</app:$key>")
+            }
+            sb.append("</d:prop></d:set>")
+        }
+        if (removeProps.isNotEmpty()) {
+            sb.append("<d:remove><d:prop>")
+            for (key in removeProps) {
+                sb.append("<app:$key/>")
+            }
+            sb.append("</d:prop></d:remove>")
+        }
+        sb.append("</d:propertyupdate>")
+        return sb.toString()
+    }
+
+    private fun escapeXml(text: String): String = text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
 
     private fun buildUrl(baseUrl: String, path: String): String {
         val cleanedBase = baseUrl.trimEnd('/')
@@ -173,9 +263,11 @@ class WebDavClient(
     }
 
     class UnauthorizedException : IOException("Unauthorized")
+    class HttpException(val code: Int, message: String) : IOException("HTTP $code: $message")
 
     companion object {
         const val PHOTOS_BASE_PATH = "/dav/photos/"
+        const val WEBGALLERY_NS = "http://webgallery.app/ns/"
 
         private const val MINIMAL_PROPFIND_BODY = """<?xml version="1.0" encoding="UTF-8"?>
 <d:propfind xmlns:d="DAV:">

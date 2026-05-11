@@ -14,6 +14,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.webgallery.data.db.MutationEntity
 import com.webgallery.data.db.PhotoEntity
 import com.webgallery.model.MediaType
 import com.webgallery.ui.theme.FavoriteRed
@@ -38,7 +42,8 @@ import java.io.File
 fun ThumbnailCard(
     photo: PhotoEntity,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onLongClick: () -> Unit = {},
+    pendingMutationType: String? = null
 ) {
     val context = LocalContext.current
     val isVideo = photo.mediaType == MediaType.VIDEO.name
@@ -63,6 +68,31 @@ fun ThumbnailCard(
                 contentScale = ContentScale.Crop
             )
         }
+
+        // Pending mutation overlay
+        if (pendingMutationType != null) {
+            val (icon, tint) = when (pendingMutationType) {
+                MutationEntity.TYPE_DELETE -> Icons.Outlined.Delete to MaterialTheme.colorScheme.error
+                MutationEntity.TYPE_CHANGE_DATE -> Icons.Outlined.CalendarMonth to Color(0xFFFF9800)
+                MutationEntity.TYPE_SET_TAGS -> Icons.Outlined.Label to Color(0xFF4CAF50)
+                else -> Icons.Outlined.Label to MaterialTheme.colorScheme.onSurface
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(4.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50))
+                    .padding(3.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = "Pending $pendingMutationType",
+                    tint = tint,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
         if (isVideo) {
             Box(
                 modifier = Modifier

@@ -8,13 +8,16 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.webgallery.AppContainer
 import com.webgallery.WebGalleryApp
 import com.webgallery.ui.favorites.FavoritesViewModel
+import com.webgallery.ui.flagged.FlaggedViewModel
 import com.webgallery.ui.gallery.GalleryViewModel
+import com.webgallery.ui.queue.QueueViewModel
+import com.webgallery.ui.upload.WatchedFoldersViewModel
 import com.webgallery.ui.settings.SettingsViewModel
 import com.webgallery.ui.setup.SetupViewModel
 import com.webgallery.ui.video.VideoPlayerViewModel
 import com.webgallery.ui.viewer.PhotoViewerViewModel
 
-class AppViewModelFactory(private val container: AppContainer) : ViewModelProvider.Factory {
+class AppViewModelFactory(private val container: AppContainer, private val app: WebGalleryApp) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         @Suppress("UNCHECKED_CAST")
         return when (modelClass) {
@@ -23,7 +26,7 @@ class AppViewModelFactory(private val container: AppContainer) : ViewModelProvid
                 container.credentialStore,
                 container.settingsRepository
             ) as T
-            GalleryViewModel::class.java -> GalleryViewModel(container.photoRepository) as T
+            GalleryViewModel::class.java -> GalleryViewModel(container.photoRepository, app) as T
             FavoritesViewModel::class.java -> FavoritesViewModel(
                 container.photoRepository,
                 container.imageCacheManager
@@ -36,6 +39,18 @@ class AppViewModelFactory(private val container: AppContainer) : ViewModelProvid
                 container.photoRepository,
                 container.webDavClient,
                 container.okHttpClient
+            ) as T
+            WatchedFoldersViewModel::class.java -> WatchedFoldersViewModel(
+                container.watchedFolderDao,
+                container.uploadDao,
+                app
+            ) as T
+            QueueViewModel::class.java -> QueueViewModel(
+                container.photoRepository
+            ) as T
+            FlaggedViewModel::class.java -> FlaggedViewModel(
+                container.photoRepository,
+                container.settingsRepository
             ) as T
             SettingsViewModel::class.java -> SettingsViewModel(
                 container.credentialStore,
@@ -50,6 +65,6 @@ class AppViewModelFactory(private val container: AppContainer) : ViewModelProvid
     }
 
     companion object {
-        fun fromApp(app: WebGalleryApp): AppViewModelFactory = AppViewModelFactory(app.container)
+        fun fromApp(app: WebGalleryApp): AppViewModelFactory = AppViewModelFactory(app.container, app)
     }
 }

@@ -1,0 +1,36 @@
+v2.0.0 — Major feature release
+
+Sync:
+- Background sync via foreground service — continues when app is backgrounded
+- ETag-based incremental sync — skips unchanged directories
+- Client-side content hashing for reliable change detection
+- Parallel month discovery and processing
+- Batched database operations for 100k+ photo libraries
+- Sync progress notification with cancel button
+
+Edit & Organize:
+- Change photo dates (EXIF DateTimeOriginal modification)
+- Add and edit tags via WebDAV PROPPATCH
+- Delete photos (moved to server trash)
+- Offline mutation queue — edits are queued and pushed when online
+- Pending mutation indicators on thumbnails (per-type icons)
+- Queue management screen in Settings
+
+Upload:
+- Watch folders for auto-upload (Camera, WhatsApp, Screenshots, custom)
+- Upload to server _inbox/ with automatic organization
+- Browse watched folder contents with upload status overlays
+- WiFi-only and delete-after-upload options per folder
+- Background periodic scanning via WorkManager
+
+Gallery:
+- Year timeline scrubber with sync stats (hideable, scrollable)
+- Flag photos for inspection with error diagnostics
+- Flagged images screen with metadata and error logs
+- Debounced UI updates for smooth scrolling during sync
+
+Diagnostics:
+- Per-photo error recording (download failures with HTTP status)
+- Flagged images inspector
+- Pending changes viewer with retry/discard
+- Force re-sync option

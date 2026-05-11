@@ -18,6 +18,8 @@ data class Photo(
     val thumbnailDownloaded: Boolean,
     val localThumbnailPath: String?,
     val isFavorite: Boolean,
+    val isFlagged: Boolean,
+    val tags: String?,
     val localFullPath: String?,
     val localFavoritePath: String?,
     val isDeleted: Boolean,
@@ -35,4 +37,10 @@ data class PhotoCounts(
     val total: Int = 0,
     val photoCount: Int = 0,
     val videoCount: Int = 0
+)
+
+data class YearStats(
+    val year: Int,
+    val totalCount: Int = 0,
+    val thumbnailsDownloaded: Int = 0
 )

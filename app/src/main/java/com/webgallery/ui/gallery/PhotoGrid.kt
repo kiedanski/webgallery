@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -35,6 +36,19 @@ data class GallerySection(
     val photos: List<PhotoEntity>
 )
 
+/**
+ * Returns the flat item index of the header for the given year (first month of that year).
+ * Each section contributes 1 header item + N photo items.
+ */
+fun sectionIndexForYear(sections: List<GallerySection>, year: Int): Int? {
+    var index = 0
+    for (section in sections) {
+        if (section.yearMonth.year == year) return index
+        index += 1 + section.photos.size // 1 header + photos
+    }
+    return null
+}
+
 @Composable
 fun PhotoGrid(
     sections: List<GallerySection>,
@@ -42,6 +56,8 @@ fun PhotoGrid(
     onPhotoClick: (Long, Boolean) -> Unit,
     onPhotoLongPress: (PhotoEntity) -> Unit = {},
     modifier: Modifier = Modifier,
+    gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
+    pendingMutations: Map<Long, String> = emptyMap(),
 ) {
     val configuration = LocalConfiguration.current
     val widthDp = configuration.screenWidthDp
@@ -51,10 +67,9 @@ fun PhotoGrid(
         isLandscape -> 4
         else -> 3
     }
-    val state = rememberLazyStaggeredGridState()
 
     LazyVerticalStaggeredGrid(
-        state = state,
+        state = gridState,
         columns = StaggeredGridCells.Fixed(columnCount),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalItemSpacing = 2.dp,
@@ -80,7 +95,8 @@ fun PhotoGrid(
                         val isVideo = photo.mediaType == "VIDEO"
                         onPhotoClick(photo.id, isVideo)
                     },
-                    onLongClick = { onPhotoLongPress(photo) }
+                    onLongClick = { onPhotoLongPress(photo) },
+                    pendingMutationType = pendingMutations[photo.id]
                 )
             }
         }

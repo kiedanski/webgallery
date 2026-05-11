@@ -14,6 +14,7 @@ import com.webgallery.model.Photo
     indices = [
         Index(value = ["year", "month"], name = "idx_photos_year_month"),
         Index(value = ["is_favorite"], name = "idx_photos_is_favorite"),
+        Index(value = ["is_flagged"], name = "idx_photos_is_flagged"),
         Index(value = ["is_deleted"], name = "idx_photos_is_deleted"),
         Index(value = ["remote_thumbnail_path"], unique = true, name = "idx_photos_remote_thumbnail")
     ]
@@ -34,8 +35,10 @@ data class PhotoEntity(
     @ColumnInfo(name = "thumbnail_downloaded", defaultValue = "0") val thumbnailDownloaded: Boolean = false,
     @ColumnInfo(name = "local_thumbnail_path") val localThumbnailPath: String? = null,
     @ColumnInfo(name = "is_favorite", defaultValue = "0") val isFavorite: Boolean = false,
+    @ColumnInfo(name = "is_flagged", defaultValue = "0") val isFlagged: Boolean = false,
     @ColumnInfo(name = "local_full_path") val localFullPath: String? = null,
     @ColumnInfo(name = "local_favorite_path") val localFavoritePath: String? = null,
+    @ColumnInfo(name = "tags") val tags: String? = null,
     @ColumnInfo(name = "is_deleted", defaultValue = "0") val isDeleted: Boolean = false,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long
@@ -56,6 +59,8 @@ data class PhotoEntity(
         thumbnailDownloaded = thumbnailDownloaded,
         localThumbnailPath = localThumbnailPath,
         isFavorite = isFavorite,
+        isFlagged = isFlagged,
+        tags = tags,
         localFullPath = localFullPath,
         localFavoritePath = localFavoritePath,
         isDeleted = isDeleted,

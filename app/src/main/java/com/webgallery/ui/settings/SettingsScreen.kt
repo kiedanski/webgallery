@@ -46,7 +46,10 @@ private const val SOURCE_URL = "https://github.com/kiedanski/webgallery"
 @Composable
 fun SettingsScreen(
     factory: AppViewModelFactory,
-    onDisconnected: () -> Unit
+    onDisconnected: () -> Unit,
+    onNavigateToFlagged: () -> Unit = {},
+    onNavigateToQueue: () -> Unit = {},
+    onNavigateToWatchedFolders: () -> Unit = {}
 ) {
     val viewModel: SettingsViewModel = viewModel(factory = factory)
     val context = LocalContext.current
@@ -110,6 +113,40 @@ fun SettingsScreen(
                 )
             }
             item { SettingItem("Favorites", favoritesSize) }
+
+            item { HorizontalDivider() }
+            item { SectionHeader("Upload") }
+            item {
+                SettingItem(
+                    title = "Watched folders",
+                    value = "Auto-upload from Camera, WhatsApp, etc.",
+                    onClick = onNavigateToWatchedFolders
+                )
+            }
+
+            item { HorizontalDivider() }
+            item { SectionHeader("Diagnostics") }
+            item {
+                SettingItem(
+                    title = "Flagged images",
+                    value = "Inspect images with issues",
+                    onClick = onNavigateToFlagged
+                )
+            }
+            item {
+                SettingItem(
+                    title = "Pending changes",
+                    value = "View queued edits and deletions",
+                    onClick = onNavigateToQueue
+                )
+            }
+            item {
+                SettingItem(
+                    title = "Force re-sync",
+                    value = "Re-check all directories on next sync",
+                    onClick = { viewModel.forceResync() }
+                )
+            }
 
             item { HorizontalDivider() }
             item { SectionHeader("Appearance") }

@@ -17,5 +17,6 @@ data class SyncStateEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     @ColumnInfo(name = "directory_path") val directoryPath: String,
     @ColumnInfo(name = "etag") val etag: String? = null,
+    @ColumnInfo(name = "content_hash") val contentHash: String? = null,
     @ColumnInfo(name = "last_synced_at") val lastSyncedAt: Long
 )

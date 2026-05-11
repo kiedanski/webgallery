@@ -13,8 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -33,6 +39,10 @@ fun PhotoActionsSheet(
     photo: PhotoEntity,
     onDismiss: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onToggleFlag: () -> Unit,
+    onChangeDate: () -> Unit,
+    onEditTags: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
     ModalBottomSheet(
@@ -46,6 +56,15 @@ fun PhotoActionsSheet(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 maxLines = 1
             )
+            if (!photo.tags.isNullOrBlank()) {
+                Text(
+                    text = photo.tags,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 2.dp),
+                    maxLines = 1
+                )
+            }
             Spacer(Modifier.height(8.dp))
             ActionRow(
                 icon = if (photo.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
@@ -54,6 +73,44 @@ fun PhotoActionsSheet(
                 onClick = {
                     onToggleFavorite()
                     onDismiss()
+                }
+            )
+            ActionRow(
+                icon = if (photo.isFlagged) Icons.Filled.Flag else Icons.Outlined.Flag,
+                tint = if (photo.isFlagged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                label = if (photo.isFlagged) "Remove flag" else "Flag for inspection",
+                onClick = {
+                    onToggleFlag()
+                    onDismiss()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            ActionRow(
+                icon = Icons.Outlined.CalendarMonth,
+                tint = MaterialTheme.colorScheme.onSurface,
+                label = "Change date",
+                onClick = {
+                    onDismiss()
+                    onChangeDate()
+                }
+            )
+            ActionRow(
+                icon = Icons.Outlined.Label,
+                tint = MaterialTheme.colorScheme.onSurface,
+                label = if (photo.tags.isNullOrBlank()) "Add tags" else "Edit tags",
+                onClick = {
+                    onDismiss()
+                    onEditTags()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            ActionRow(
+                icon = Icons.Outlined.Delete,
+                tint = MaterialTheme.colorScheme.error,
+                label = "Delete",
+                onClick = {
+                    onDismiss()
+                    onDelete()
                 }
             )
         }

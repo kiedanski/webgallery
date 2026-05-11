@@ -2,10 +2,16 @@
 // Copyright (C) 2026 WebGallery contributors
 package com.webgallery.data
 
+import android.util.Log
 import com.webgallery.data.cache.ImageCacheManager
 import com.webgallery.data.cache.ThumbnailStore
+import com.webgallery.data.db.MutationDao
+import com.webgallery.data.db.MutationEntity
 import com.webgallery.data.db.PhotoDao
 import com.webgallery.data.db.PhotoEntity
+import com.webgallery.data.db.ThumbnailUpdate
+import com.webgallery.data.db.PhotoErrorDao
+import com.webgallery.data.db.PhotoErrorEntity
 import com.webgallery.data.db.SyncStateDao
 import com.webgallery.data.db.SyncStateEntity
 import com.webgallery.data.webdav.WebDavClient
@@ -13,6 +19,7 @@ import com.webgallery.model.MediaType
 import com.webgallery.model.PhotoCounts
 import com.webgallery.model.SyncStatus
 import com.webgallery.model.YearMonth
+import com.webgallery.model.YearStats
 import com.webgallery.util.FileUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +29,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
@@ -36,6 +44,8 @@ class PhotoRepository(
     private val webDavClient: WebDavClient,
     private val photoDao: PhotoDao,
     private val syncStateDao: SyncStateDao,
+    private val photoErrorDao: PhotoErrorDao,
+    private val mutationDao: MutationDao,
     private val thumbnailStore: ThumbnailStore,
     private val imageCacheManager: ImageCacheManager,
     private val settingsRepository: SettingsRepository
@@ -43,6 +53,10 @@ class PhotoRepository(
 
     private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
+
+    fun setSyncStatus(status: SyncStatus) {
+        _syncStatus.value = status
+    }
 
     fun getAllYearMonths(): Flow<List<YearMonth>> = photoDao.getAllYearMonths()
     fun getPhotosByYearMonth(year: Int, month: Int): Flow<List<PhotoEntity>> =
@@ -52,68 +66,216 @@ class PhotoRepository(
     fun getCountsByYearMonth(year: Int, month: Int): Flow<PhotoCounts> =
         photoDao.getCountByYearMonth(year, month)
     fun getFavorites(): Flow<List<PhotoEntity>> = photoDao.getFavorites()
+    fun getFlaggedPhotos(): Flow<List<PhotoEntity>> = photoDao.getFlaggedPhotos()
+    fun getYearStats(): Flow<List<YearStats>> = photoDao.getYearStats()
+    fun getErrorsForPhoto(photoId: Long): Flow<List<PhotoErrorEntity>> =
+        photoErrorDao.getErrorsForPhoto(photoId)
     fun getPhotoById(id: Long): Flow<PhotoEntity?> = photoDao.getPhotoById(id)
     suspend fun getPhotoOnce(id: Long): PhotoEntity? = photoDao.getPhotoByIdOnce(id)
 
-    suspend fun sync() = withContext(Dispatchers.IO) {
+    suspend fun toggleFlagged(photo: PhotoEntity): Boolean = withContext(Dispatchers.IO) {
+        val newState = !photo.isFlagged
+        photoDao.updateFlagged(photo.id, newState)
+        newState
+    }
+
+    fun getPendingMutationCount(): Flow<Int> = mutationDao.getPendingCount()
+    fun getPendingPhotoMutations(): Flow<Map<Long, String>> = mutationDao.getPendingPhotoMutations()
+        .map { list -> list.associate { it.photoId to it.mutationType } }
+    fun getAllMutations(): Flow<List<MutationEntity>> = mutationDao.getAll()
+
+    suspend fun enqueueDateChange(photo: PhotoEntity, exifDateStr: String) = withContext(Dispatchers.IO) {
+        val payload = org.json.JSONObject().put("date", exifDateStr).toString()
+        mutationDao.insert(
+            MutationEntity(
+                photoId = photo.id,
+                mutationType = MutationEntity.TYPE_CHANGE_DATE,
+                payload = payload,
+                remotePath = photo.remoteOriginalPath,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
+    suspend fun enqueueTagChange(photo: PhotoEntity, tags: String) = withContext(Dispatchers.IO) {
+        val payload = org.json.JSONObject().put("tags", tags).toString()
+        mutationDao.insert(
+            MutationEntity(
+                photoId = photo.id,
+                mutationType = MutationEntity.TYPE_SET_TAGS,
+                payload = payload,
+                remotePath = photo.remoteOriginalPath,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        // Optimistic local update
+        photoDao.updateTags(photo.id, tags.ifBlank { null })
+    }
+
+    suspend fun enqueueDelete(photo: PhotoEntity) = withContext(Dispatchers.IO) {
+        mutationDao.insert(
+            MutationEntity(
+                photoId = photo.id,
+                mutationType = MutationEntity.TYPE_DELETE,
+                payload = "{}",
+                remotePath = photo.remoteOriginalPath,
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        // Optimistic local delete
+        photoDao.upsertPhoto(photo.copy(isDeleted = true, updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun retryMutation(mutationId: Long) = withContext(Dispatchers.IO) {
+        mutationDao.updateStatus(mutationId, MutationEntity.STATUS_PENDING)
+    }
+
+    suspend fun discardMutation(mutationId: Long) = withContext(Dispatchers.IO) {
+        mutationDao.delete(mutationId)
+    }
+
+    suspend fun sync(onDownloadProgress: ((Int, Int) -> Unit)? = null) = withContext(Dispatchers.IO) {
         if (!webDavClient.isConfigured()) {
             _syncStatus.value = SyncStatus.Error("Not configured")
             return@withContext
         }
         _syncStatus.value = SyncStatus.Syncing(0, 0)
         try {
-            // Phase 1: Discover years
+            // Phase 1: Discover years (1 PROPFIND)
             val yearsResult = webDavClient.propfind("/dav/photos/_thumbnails/", depth = 1)
             val yearResources = yearsResult.getOrElse {
                 handleSyncError(it)
                 return@withContext
             }
 
-            val yearDirs = yearResources
+            val yearInfos = yearResources
                 .filter { it.isCollection }
-                .mapNotNull { extractYearFromPath(it.href) }
-                .distinct()
-                .sortedDescending()
-
-            val pendingMonths = mutableListOf<MonthInfo>()
-
-            for (year in yearDirs) {
-                if (!currentCoroutineContext().isActive) return@withContext
-                val monthsResult = webDavClient.propfind("/dav/photos/_thumbnails/$year/", depth = 1)
-                val monthResources = monthsResult.getOrElse {
-                    handleSyncError(it)
-                    return@withContext
+                .mapNotNull { res ->
+                    val year = extractYearFromPath(res.href) ?: return@mapNotNull null
+                    Log.d("Sync", "Year $year etag=${res.etag}")
+                    YearInfo(year, res.etag)
                 }
-                val monthDirs = monthResources
-                    .filter { it.isCollection }
-                    .mapNotNull { res ->
-                        val month = extractMonthFromPath(res.href, year) ?: return@mapNotNull null
-                        MonthInfo(year, month, res.etag)
+                .distinctBy { it.year }
+                .sortedByDescending { it.year }
+
+            // Phase 2: Discover months only for changed years (parallel)
+            // Skip years where ETag or content hash hasn't changed
+            val pendingMonths = coroutineScope {
+                yearInfos.map { yearInfo ->
+                    async {
+                        if (!currentCoroutineContext().isActive) return@async emptyList()
+                        val yearDirPath = "_thumbnails/${yearInfo.year}/"
+                        val yearState = syncStateDao.getByPath(yearDirPath)
+
+                        // Fast path: year-level server ETag matches → skip all months
+                        // Never skip current year — new photos may be added frequently
+                        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+                        if (yearInfo.year != currentYear &&
+                            yearState != null && yearState.etag != null && yearInfo.etag != null && yearState.etag == yearInfo.etag) {
+                            Log.d("Sync", "Year ${yearInfo.year}: SKIP (etag match)")
+                            return@async emptyList()
+                        }
+                        Log.d("Sync", "Year ${yearInfo.year}: checking months (server=${yearInfo.etag} stored=${yearState?.etag})")
+
+                        val monthsResult = webDavClient.propfind("/dav/photos/_thumbnails/${yearInfo.year}/", depth = 1)
+                        val monthResources = monthsResult.getOrNull()
+                            ?.filter { it.isCollection }
+                            ?: return@async emptyList()
+
+                        // Compute content hash of month directories for this year
+                        val monthNames = monthResources.mapNotNull { res ->
+                            extractMonthFromPath(res.href, yearInfo.year)?.toString()
+                        }
+                        val yearContentHash = computeContentHash(monthNames)
+
+                        // Fast path: year content hash matches → no months added/removed, skip
+                        // But always check months for current year (new photos in existing months)
+                        if (yearInfo.year != currentYear &&
+                            yearState != null && yearState.contentHash != null && yearState.contentHash == yearContentHash) {
+                            // Update ETag if server started providing one
+                            if (yearInfo.etag != null && yearState.etag != yearInfo.etag) {
+                                syncStateDao.upsert(yearState.copy(etag = yearInfo.etag, lastSyncedAt = System.currentTimeMillis()))
+                            }
+                            Log.d("Sync", "Year ${yearInfo.year}: SKIP (content hash match)")
+                            return@async emptyList()
+                        }
+
+                        // Year changed — store updated state and return months for processing
+                        syncStateDao.upsert(
+                            SyncStateEntity(
+                                directoryPath = yearDirPath,
+                                etag = yearInfo.etag,
+                                contentHash = yearContentHash,
+                                lastSyncedAt = System.currentTimeMillis()
+                            )
+                        )
+
+                        monthResources
+                            .mapNotNull { res ->
+                                val month = extractMonthFromPath(res.href, yearInfo.year) ?: return@mapNotNull null
+                                MonthInfo(yearInfo.year, month, res.etag)
+                            }
+                            .sortedByDescending { it.month }
                     }
-                    .sortedByDescending { it.month }
-                pendingMonths += monthDirs
+                }.awaitAll().flatten()
             }
 
-            // Phase 2 & 3 & 4: For each month, decide whether to sync
-            for (info in pendingMonths) {
-                if (!currentCoroutineContext().isActive) return@withContext
-                val dirPath = "_thumbnails/${info.year}/${info.month.toString().padStart(2, '0')}/"
-                val state = syncStateDao.getByPath(dirPath)
-                if (state != null && state.etag != null && info.etag != null && state.etag == info.etag) {
-                    continue
-                }
-                processMonth(info)
-                syncStateDao.upsert(
-                    SyncStateEntity(
-                        directoryPath = dirPath,
-                        etag = info.etag,
-                        lastSyncedAt = System.currentTimeMillis()
-                    )
-                )
+            // Phase 3: Filter to months that actually need processing, then process in parallel
+            val processSemaphore = Semaphore(4)
+            coroutineScope {
+                pendingMonths.map { info ->
+                    async {
+                        processSemaphore.withPermit {
+                            if (!currentCoroutineContext().isActive) return@withPermit
+                            val dirPath = "_thumbnails/${info.year}/${info.month.toString().padStart(2, '0')}/"
+                            val state = syncStateDao.getByPath(dirPath)
+
+                            // Fast path: server ETag matches → skip entirely (no HTTP, no DB)
+                            if (state != null && state.etag != null && info.etag != null && state.etag == info.etag) {
+                                Log.d("Sync", "Month ${info.year}/${info.month}: SKIP (etag server=${info.etag} stored=${state.etag})")
+                                return@withPermit
+                            }
+                            Log.d("Sync", "Month ${info.year}/${info.month}: checking (etag server=${info.etag} stored=${state?.etag} hash=${state?.contentHash})")
+
+                            // PROPFIND the thumbnail directory to get file list
+                            val monthStr = info.month.toString().padStart(2, '0')
+                            val thumbsResult = webDavClient.propfind("/dav/photos/_thumbnails/${info.year}/$monthStr/", depth = 1)
+                            val thumbResources = thumbsResult.getOrNull()
+                                ?.filter { !it.isCollection }
+                                ?: return@withPermit
+
+                            // Compute content hash from sorted thumbnail filenames
+                            val contentHash = computeContentHash(thumbResources.map { it.name })
+
+                            // Fast path: client content hash matches → skip (no originals PROPFIND, no DB)
+                            if (state != null && state.contentHash != null && state.contentHash == contentHash) {
+                                // Update ETag if server started providing one, but skip processing
+                                if (info.etag != null && state.etag != info.etag) {
+                                    syncStateDao.upsert(state.copy(etag = info.etag, lastSyncedAt = System.currentTimeMillis()))
+                                }
+                                return@withPermit
+                            }
+
+                            // Content changed — do full processing
+                            processMonth(info, thumbResources)
+                            syncStateDao.upsert(
+                                SyncStateEntity(
+                                    directoryPath = dirPath,
+                                    etag = info.etag,
+                                    contentHash = contentHash,
+                                    lastSyncedAt = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                    }
+                }.awaitAll()
             }
 
-            // Phase 5: Download missing thumbnails
-            downloadMissingThumbnails()
+            // Phase 4: Download missing thumbnails
+            downloadMissingThumbnails(onDownloadProgress)
 
             settingsRepository.setLastSyncTimestamp(System.currentTimeMillis())
             _syncStatus.value = SyncStatus.Complete
@@ -137,13 +299,16 @@ class PhotoRepository(
         }
     }
 
-    private suspend fun processMonth(info: MonthInfo) {
+    private fun computeContentHash(filenames: List<String>): String {
+        val sorted = filenames.sorted().joinToString("\n")
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        return digest.digest(sorted.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun processMonth(info: MonthInfo, thumbResources: List<com.webgallery.data.webdav.DavResource>) {
         val year = info.year
         val month = info.month
         val monthStr = month.toString().padStart(2, '0')
-        val thumbsResult = webDavClient.propfind("/dav/photos/_thumbnails/$year/$monthStr/", depth = 1)
-        val thumbResources = thumbsResult.getOrElse { return }
-            .filter { !it.isCollection }
         val originalsResult = webDavClient.propfind("/dav/photos/$year/$monthStr/", depth = 1)
         val originalResources = originalsResult.getOrElse { return }
             .filter { !it.isCollection }
@@ -152,6 +317,11 @@ class PhotoRepository(
             FileUtils.filenameWithoutExtension(res.name).lowercase()
         }
 
+        // Batch read: fetch all existing photos for this month in one query
+        val existingByThumbPath = photoDao.getAllForMonth(year, month)
+            .associateBy { it.remoteThumbnailPath }
+
+        val toUpsert = mutableListOf<PhotoEntity>()
         val keepIds = mutableListOf<Long>()
         val now = System.currentTimeMillis()
 
@@ -164,9 +334,9 @@ class PhotoRepository(
             val remoteThumbPath = "_thumbnails/$year/$monthStr/${thumb.name}"
             val remoteOriginalPath = "$year/$monthStr/${original.name}"
 
-            val existing = photoDao.findByThumbnailPath(remoteThumbPath)
+            val existing = existingByThumbPath[remoteThumbPath]
             if (existing == null) {
-                val entity = PhotoEntity(
+                toUpsert += PhotoEntity(
                     remoteThumbnailPath = remoteThumbPath,
                     remoteOriginalPath = remoteOriginalPath,
                     year = year,
@@ -181,72 +351,123 @@ class PhotoRepository(
                     thumbnailDownloaded = false,
                     localThumbnailPath = null,
                     isFavorite = false,
+                    isFlagged = false,
                     localFullPath = null,
                     localFavoritePath = null,
                     isDeleted = false,
                     createdAt = now,
                     updatedAt = now
                 )
-                photoDao.upsertPhoto(entity)
-                val saved = photoDao.findByThumbnailPath(remoteThumbPath)
-                saved?.id?.let { keepIds += it }
             } else {
                 if (existing.etag != original.etag) {
-                    photoDao.upsertPhoto(
-                        existing.copy(
-                            etag = original.etag,
-                            fileSize = original.contentLength ?: existing.fileSize,
-                            lastModified = original.lastModified,
-                            isDeleted = false,
-                            updatedAt = now
-                        )
+                    toUpsert += existing.copy(
+                        etag = original.etag,
+                        fileSize = original.contentLength ?: existing.fileSize,
+                        lastModified = original.lastModified,
+                        isDeleted = false,
+                        updatedAt = now
                     )
                 } else if (existing.isDeleted) {
-                    photoDao.upsertPhoto(existing.copy(isDeleted = false, updatedAt = now))
+                    toUpsert += existing.copy(isDeleted = false, updatedAt = now)
                 }
                 keepIds += existing.id
             }
         }
 
+        // Batch write: single transaction for all inserts/updates
+        if (toUpsert.isNotEmpty()) {
+            photoDao.upsertPhotos(toUpsert)
+        }
+
+        // Collect IDs for newly inserted photos (they didn't have IDs before upsert)
+        if (keepIds.size < thumbResources.size) {
+            val allAfter = photoDao.getAllForMonth(year, month)
+            keepIds.clear()
+            keepIds += allAfter.filter { !it.isDeleted || toUpsert.any { u -> u.remoteThumbnailPath == it.remoteThumbnailPath } }
+                .map { it.id }
+        }
+
         photoDao.markDeletedByMonth(year, month, keepIds)
     }
 
-    private suspend fun downloadMissingThumbnails() = coroutineScope {
+    private suspend fun downloadMissingThumbnails(onDownloadProgress: ((Int, Int) -> Unit)? = null) = coroutineScope {
         val pending = photoDao.getUnsyncedThumbnails()
+        Log.d("Sync", "downloadMissingThumbnails: ${pending.size} pending")
         if (pending.isEmpty()) {
             _syncStatus.value = SyncStatus.Complete
             return@coroutineScope
         }
         val total = pending.size
         val counter = AtomicInteger(0)
-        val semaphore = Semaphore(4)
+        val semaphore = Semaphore(8)
         val diskFull = java.util.concurrent.atomic.AtomicBoolean(false)
+        val lastStatusUpdate = java.util.concurrent.atomic.AtomicLong(0)
+        val pendingDbUpdates = java.util.concurrent.ConcurrentLinkedQueue<ThumbnailUpdate>()
+        val pendingErrors = java.util.concurrent.ConcurrentLinkedQueue<PhotoErrorEntity>()
 
         _syncStatus.value = SyncStatus.Syncing(0, total)
 
-        val jobs = pending.map { entity ->
-            async {
-                semaphore.withPermit {
-                    if (!currentCoroutineContext().isActive) return@withPermit
-                    if (diskFull.get()) return@withPermit
-                    val filename = entity.remoteThumbnailPath.substringAfterLast('/')
-                    val target = thumbnailStore.getThumbnailFile(entity.year, entity.month, filename)
-                    val res = webDavClient.downloadFile("/dav/photos/${entity.remoteThumbnailPath}", target)
-                    if (res.isSuccess) {
-                        photoDao.updateThumbnailDownloaded(entity.id, true, target.absolutePath)
-                    } else {
-                        val err = res.exceptionOrNull()
-                        if (err is IOException && (err.message?.contains("No space", ignoreCase = true) == true ||
-                                err.cause?.message?.contains("No space", ignoreCase = true) == true)) {
-                            diskFull.set(true)
+        // Process in chunks to batch DB writes
+        val chunkSize = 50
+        for (chunk in pending.chunked(chunkSize)) {
+            val jobs = chunk.map { entity ->
+                async {
+                    semaphore.withPermit {
+                        if (!currentCoroutineContext().isActive) return@withPermit
+                        if (diskFull.get()) return@withPermit
+                        val filename = entity.remoteThumbnailPath.substringAfterLast('/')
+                        val target = thumbnailStore.getThumbnailFile(entity.year, entity.month, filename)
+                        val res = webDavClient.downloadFile("/dav/photos/${entity.remoteThumbnailPath}", target)
+                        if (res.isSuccess) {
+                            pendingDbUpdates.add(
+                                ThumbnailUpdate(entity.id, true, target.absolutePath)
+                            )
+                        } else {
+                            val err = res.exceptionOrNull()
+                            pendingErrors.add(
+                                PhotoErrorEntity(
+                                    photoId = entity.id,
+                                    errorType = "THUMBNAIL_DOWNLOAD",
+                                    errorMessage = err?.message ?: "Unknown error",
+                                    httpStatus = (err as? WebDavClient.HttpException)?.code,
+                                    remotePath = entity.remoteThumbnailPath,
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            )
+                            if (err is IOException && (err.message?.contains("No space", ignoreCase = true) == true ||
+                                    err.cause?.message?.contains("No space", ignoreCase = true) == true)) {
+                                diskFull.set(true)
+                            }
+                        }
+                        val current = counter.incrementAndGet()
+                        // Throttle status updates to at most once per 250ms
+                        val now = System.currentTimeMillis()
+                        if (now - lastStatusUpdate.get() > 250) {
+                            lastStatusUpdate.set(now)
+                            _syncStatus.value = SyncStatus.Syncing(current, total)
+                            onDownloadProgress?.invoke(current, total)
                         }
                     }
-                    val current = counter.incrementAndGet()
-                    _syncStatus.value = SyncStatus.Syncing(current, total)
                 }
             }
+            jobs.awaitAll()
+
+            // Flush batched DB writes after each chunk (single transaction)
+            val updates = mutableListOf<ThumbnailUpdate>()
+            while (true) { pendingDbUpdates.poll()?.let { updates += it } ?: break }
+            if (updates.isNotEmpty()) {
+                photoDao.batchUpdateThumbnailDownloaded(updates)
+            }
+
+            val errors = mutableListOf<PhotoErrorEntity>()
+            while (true) { pendingErrors.poll()?.let { errors += it } ?: break }
+            for (error in errors) {
+                photoErrorDao.insert(error)
+            }
+
+            // Update status after each chunk flush
+            _syncStatus.value = SyncStatus.Syncing(counter.get(), total)
         }
-        jobs.awaitAll()
 
         if (diskFull.get()) {
             _syncStatus.value = SyncStatus.Error("Storage full — free up space and try again")
@@ -272,16 +493,25 @@ class PhotoRepository(
                 evictCacheIfNeeded(cacheLimitBytes)
                 target
             },
-            onFailure = { null }
+            onFailure = { err ->
+                photoErrorDao.insert(
+                    PhotoErrorEntity(
+                        photoId = photo.id,
+                        errorType = "FULL_IMAGE_DOWNLOAD",
+                        errorMessage = err.message ?: "Unknown error",
+                        httpStatus = (err as? WebDavClient.HttpException)?.code,
+                        remotePath = photo.remoteOriginalPath,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+                null
+            }
         )
     }
 
     suspend fun evictCacheIfNeeded(limitBytes: Long) = withContext(Dispatchers.IO) {
         val evicted = imageCacheManager.evictIfNeeded(limitBytes)
-        // The simplest path: any photo whose local_full_path no longer exists gets cleared.
-        // We do a broad sweep via the DAO instead of per-row updates.
         if (evicted.isNotEmpty()) {
-            // Clear stale references
             photoDao.clearAllLocalFullPaths()
         }
     }
@@ -321,7 +551,6 @@ class PhotoRepository(
         syncStateDao.deleteAll()
         thumbnailStore.deleteAllThumbnails()
         imageCacheManager.clearCache()
-        // favorites dir
         File(imageCacheManager.favoritesRoot().absolutePath).deleteRecursively()
         imageCacheManager.favoritesRoot().mkdirs()
     }
@@ -329,6 +558,10 @@ class PhotoRepository(
     suspend fun clearImageCache() = withContext(Dispatchers.IO) {
         imageCacheManager.clearCache()
         photoDao.clearAllLocalFullPaths()
+    }
+
+    suspend fun forceSyncStateReset() = withContext(Dispatchers.IO) {
+        syncStateDao.deleteAll()
     }
 
     suspend fun clearThumbnailCache() = withContext(Dispatchers.IO) {
@@ -365,5 +598,6 @@ class PhotoRepository(
         }
     }
 
+    private data class YearInfo(val year: Int, val etag: String?)
     private data class MonthInfo(val year: Int, val month: Int, val etag: String?)
 }

@@ -29,7 +29,10 @@ import androidx.navigation.navArgument
 import com.webgallery.WebGalleryApp
 import com.webgallery.ui.AppViewModelFactory
 import com.webgallery.ui.favorites.FavoritesScreen
+import com.webgallery.ui.flagged.FlaggedScreen
 import com.webgallery.ui.gallery.GalleryScreen
+import com.webgallery.ui.queue.QueueScreen
+import com.webgallery.ui.upload.WatchedFoldersScreen
 import com.webgallery.ui.settings.SettingsScreen
 import com.webgallery.ui.setup.SetupScreen
 import com.webgallery.ui.video.VideoPlayerScreen
@@ -40,6 +43,9 @@ object Routes {
     const val GALLERY = "gallery"
     const val FAVORITES = "favorites"
     const val SETTINGS = "settings"
+    const val FLAGGED = "flagged"
+    const val QUEUE = "queue"
+    const val WATCHED_FOLDERS = "watched_folders"
     const val PHOTO_VIEWER = "photo_viewer/{photoId}"
     const val VIDEO_PLAYER = "video_player/{photoId}"
     fun photoViewer(id: Long) = "photo_viewer/$id"
@@ -132,7 +138,28 @@ fun AppNavHost(app: WebGalleryApp) {
                         navController.navigate(Routes.SETUP) {
                             popUpTo(navController.graph.id) { inclusive = true }
                         }
-                    }
+                    },
+                    onNavigateToFlagged = { navController.navigate(Routes.FLAGGED) },
+                    onNavigateToQueue = { navController.navigate(Routes.QUEUE) },
+                    onNavigateToWatchedFolders = { navController.navigate(Routes.WATCHED_FOLDERS) }
+                )
+            }
+            composable(Routes.WATCHED_FOLDERS) {
+                WatchedFoldersScreen(
+                    factory = factory,
+                    onClose = { navController.popBackStack() }
+                )
+            }
+            composable(Routes.QUEUE) {
+                QueueScreen(
+                    factory = factory,
+                    onClose = { navController.popBackStack() }
+                )
+            }
+            composable(Routes.FLAGGED) {
+                FlaggedScreen(
+                    factory = factory,
+                    onClose = { navController.popBackStack() }
                 )
             }
             composable(

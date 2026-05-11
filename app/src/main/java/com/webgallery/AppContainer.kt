@@ -9,6 +9,8 @@ import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okio.Path.Companion.toOkioPath
 import com.webgallery.data.CredentialStore
+import com.webgallery.data.FolderScanner
+import com.webgallery.data.MutationProcessor
 import com.webgallery.data.PhotoRepository
 import com.webgallery.data.SettingsRepository
 import com.webgallery.data.cache.ImageCacheManager
@@ -36,6 +38,10 @@ class AppContainer(private val context: Context) {
     val database: AppDatabase = AppDatabase.build(context)
     val photoDao = database.photoDao()
     val syncStateDao = database.syncStateDao()
+    val photoErrorDao = database.photoErrorDao()
+    val mutationDao = database.mutationDao()
+    val watchedFolderDao = database.watchedFolderDao()
+    val uploadDao = database.uploadDao()
 
     val credentialStore: CredentialStore = CredentialStore(context)
     val settingsRepository: SettingsRepository = SettingsRepository(context)
@@ -46,9 +52,22 @@ class AppContainer(private val context: Context) {
         webDavClient = webDavClient,
         photoDao = photoDao,
         syncStateDao = syncStateDao,
+        photoErrorDao = photoErrorDao,
+        mutationDao = mutationDao,
         thumbnailStore = thumbnailStore,
         imageCacheManager = imageCacheManager,
         settingsRepository = settingsRepository
+    )
+
+    val folderScanner: FolderScanner = FolderScanner(uploadDao, watchedFolderDao)
+
+    val mutationProcessor: MutationProcessor = MutationProcessor(
+        webDavClient = webDavClient,
+        photoDao = photoDao,
+        mutationDao = mutationDao,
+        settingsRepository = settingsRepository,
+        photoRepository = photoRepository,
+        imageCacheManager = imageCacheManager
     )
 
     val imageLoader: ImageLoader = ImageLoader.Builder(context)

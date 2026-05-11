@@ -4,6 +4,7 @@ package com.webgallery
 
 import android.app.Application
 import coil3.SingletonImageLoader
+import com.webgallery.sync.UploadScanWorker
 
 class WebGalleryApp : Application() {
 
@@ -15,6 +16,7 @@ class WebGalleryApp : Application() {
         instance = this
         container = AppContainer(this)
         SingletonImageLoader.setSafe { container.imageLoader }
+        UploadScanWorker.schedule(this)
     }
 
     companion object {

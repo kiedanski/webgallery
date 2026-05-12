@@ -5,3 +5,8 @@ plugins:
   - jekyll-remote-theme
 
 show_downloads: true
+
+header_pages:
+  - index.md
+  - guide.md
+  - developer.md

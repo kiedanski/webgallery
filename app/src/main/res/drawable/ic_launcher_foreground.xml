@@ -4,7 +4,35 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Back photo card (slightly rotated effect) -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M30,32 L78,32 A4,4 0 0 1 82,36 L82,72 A4,4 0 0 1 78,76 L30,76 A4,4 0 0 1 26,72 L26,36 A4,4 0 0 1 30,32 Z M30,68 L46,52 L58,62 L70,46 L82,62 L82,72 L30,72 Z M40,46 A4,4 0 1 1 40,46.01 Z"/>
+        android:fillAlpha="0.3"
+        android:pathData="M30,30 L76,28 A4,4 0 0 1 80,32 L80,66 A4,4 0 0 1 76,70 L30,72 A4,4 0 0 1 26,68 L26,34 A4,4 0 0 1 30,30 Z"/>
+    <!-- Front photo card -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9"
+        android:pathData="M32,34 L78,34 A3,3 0 0 1 81,37 L81,71 A3,3 0 0 1 78,74 L32,74 A3,3 0 0 1 29,71 L29,37 A3,3 0 0 1 32,34 Z"/>
+    <!-- Mountain left -->
+    <path
+        android:fillColor="#6B7F99"
+        android:pathData="M29,74 L45,54 L55,64 L61,58 L81,74 Z"/>
+    <!-- Mountain right (darker) -->
+    <path
+        android:fillColor="#4A6180"
+        android:pathData="M55,64 L61,58 L81,74 L55,74 Z"/>
+    <!-- Sun -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M68,44 A5,5 0 1 1 68,44.01 Z"/>
+    <!-- Globe icon bottom right -->
+    <path
+        android:fillColor="#312E81"
+        android:pathData="M74,78 A8,8 0 1 1 74,78.01 Z"/>
+    <path
+        android:fillColor="#6366F1"
+        android:strokeColor="#C7D2FE"
+        android:strokeWidth="0.6"
+        android:pathData="M74,70 A8,8 0 0 0 66,78 A8,8 0 0 0 74,86 A8,8 0 0 0 82,78 A8,8 0 0 0 74,70 M74,70 L74,86 M66,78 L82,78 M67,74 Q74,76 81,74 M67,82 Q74,80 81,82"/>
 </vector>

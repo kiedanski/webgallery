@@ -7,11 +7,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.IBinder
+import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.webgallery.R
@@ -104,9 +106,12 @@ class UploadService : Service() {
                         Log.d(TAG, "Uploaded ${upload.fileName}")
 
                         if (folder?.deleteAfterUpload == true) {
-                            if (file.delete()) {
+                            val deleted = deleteMediaFile(file)
+                            if (deleted) {
                                 uploadDao.markDeleted(upload.id)
                                 Log.d(TAG, "Deleted local ${upload.fileName}")
+                            } else {
+                                Log.w(TAG, "Could not delete local ${upload.fileName}")
                             }
                         }
                     } else {
@@ -131,6 +136,21 @@ class UploadService : Service() {
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun deleteMediaFile(file: java.io.File): Boolean {
+        // Try direct delete first (works for app-owned files)
+        if (file.delete()) return true
+
+        // Fall back to MediaStore for shared storage files
+        val resolver = contentResolver
+        val uri = MediaStore.Files.getContentUri("external")
+        val deleted = resolver.delete(
+            uri,
+            "${MediaStore.MediaColumns.DATA} = ?",
+            arrayOf(file.absolutePath)
+        )
+        return deleted > 0
     }
 
     private fun isOnWifi(): Boolean {

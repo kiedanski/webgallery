@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
@@ -134,6 +135,21 @@ fun WatchedFoldersScreen(
         }
     }
 
+    // Handle system delete confirmation (Android 11+)
+    val deleteRequestSender by viewModel.deleteRequest.collectAsStateWithLifecycle()
+    val deleteConfirmLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onDeleteRequestResult(result.resultCode == android.app.Activity.RESULT_OK)
+    }
+    LaunchedEffect(deleteRequestSender) {
+        deleteRequestSender?.let { sender ->
+            deleteConfirmLauncher.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(sender).build()
+            )
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -147,6 +163,9 @@ fun WatchedFoldersScreen(
                 },
                 actions = {
                     if (browsingFolder == null) {
+                        IconButton(onClick = { viewModel.cleanupUploadedFiles() }) {
+                            Icon(Icons.Filled.CleaningServices, contentDescription = "Clean up uploaded files")
+                        }
                         IconButton(onClick = { viewModel.triggerUpload() }) {
                             Icon(Icons.Filled.CloudUpload, contentDescription = "Upload now")
                         }
@@ -254,6 +273,14 @@ private fun FolderCard(
                 )
             }
 
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Delete after upload", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                Switch(
+                    checked = folder.deleteAfterUpload,
+                    onCheckedChange = { viewModel.toggleDeleteAfterUpload(folder.id, it) }
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("$fileCount files", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

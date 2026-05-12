@@ -35,6 +35,9 @@ interface UploadDao {
     @Query("UPDATE uploads SET status = 'DELETED', deleted_at = :now WHERE id = :id")
     suspend fun markDeleted(id: Long, now: Long = System.currentTimeMillis())
 
+    @Query("SELECT * FROM uploads WHERE status IN ('UPLOADED', 'UPLOADING')")
+    suspend fun getUploadedNotDeleted(): List<UploadEntity>
+
     @Query("DELETE FROM uploads WHERE folder_id = :folderId")
     suspend fun deleteByFolder(folderId: Long)
 }

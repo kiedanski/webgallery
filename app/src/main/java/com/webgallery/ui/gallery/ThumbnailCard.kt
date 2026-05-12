@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Label
@@ -43,7 +47,8 @@ fun ThumbnailCard(
     photo: PhotoEntity,
     onClick: () -> Unit,
     onLongClick: () -> Unit = {},
-    pendingMutationType: String? = null
+    pendingMutationType: String? = null,
+    isSelected: Boolean = false
 ) {
     val context = LocalContext.current
     val isVideo = photo.mediaType == MediaType.VIDEO.name
@@ -53,10 +58,12 @@ fun ThumbnailCard(
             .crossfade(false)
             .build()
     }
+    val selectionBorder = if (isSelected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)) else Modifier
     Box(
         modifier = Modifier
             .aspectRatio(1f)
             .clip(RoundedCornerShape(4.dp))
+            .then(selectionBorder)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
@@ -66,6 +73,16 @@ fun ThumbnailCard(
                 contentDescription = photo.filenameStem,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
+            )
+        }
+
+        // Selection indicator
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = "Selected",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(18.dp)
             )
         }
 
@@ -118,6 +135,16 @@ fun ThumbnailCard(
                     .align(Alignment.TopEnd)
                     .padding(4.dp)
                     .size(14.dp)
+            )
+        } else if (photo.localFullPath != null || photo.localFavoritePath != null) {
+            Icon(
+                imageVector = Icons.Filled.OfflinePin,
+                contentDescription = "Available offline",
+                tint = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(12.dp)
             )
         }
     }

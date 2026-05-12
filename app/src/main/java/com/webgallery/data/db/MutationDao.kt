@@ -16,7 +16,7 @@ data class PendingMutation(
 @Dao
 interface MutationDao {
 
-    @Query("SELECT * FROM pending_mutations WHERE status = 'PENDING' ORDER BY created_at ASC")
+    @Query("SELECT * FROM pending_mutations WHERE status IN ('PENDING', 'FAILED') ORDER BY created_at ASC")
     suspend fun getPending(): List<MutationEntity>
 
     @Query("SELECT COUNT(*) FROM pending_mutations WHERE status IN ('PENDING', 'PROCESSING')")

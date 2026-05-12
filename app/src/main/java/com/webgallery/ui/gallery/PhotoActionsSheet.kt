@@ -15,10 +15,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Label
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,9 +43,12 @@ fun PhotoActionsSheet(
     onDismiss: () -> Unit,
     onToggleFavorite: () -> Unit,
     onToggleFlag: () -> Unit,
+    onShare: () -> Unit,
+    onShowInfo: () -> Unit,
     onChangeDate: () -> Unit,
     onEditTags: () -> Unit,
     onDelete: () -> Unit,
+    onSelect: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState()
     ModalBottomSheet(
@@ -84,6 +90,24 @@ fun PhotoActionsSheet(
                     onDismiss()
                 }
             )
+            ActionRow(
+                icon = Icons.Outlined.Share,
+                tint = MaterialTheme.colorScheme.onSurface,
+                label = "Share",
+                onClick = {
+                    onShare()
+                    onDismiss()
+                }
+            )
+            ActionRow(
+                icon = Icons.Outlined.Info,
+                tint = MaterialTheme.colorScheme.onSurface,
+                label = "Photo info",
+                onClick = {
+                    onDismiss()
+                    onShowInfo()
+                }
+            )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             ActionRow(
                 icon = Icons.Outlined.CalendarMonth,
@@ -111,6 +135,16 @@ fun PhotoActionsSheet(
                 onClick = {
                     onDismiss()
                     onDelete()
+                }
+            )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            ActionRow(
+                icon = Icons.Outlined.CheckBox,
+                tint = MaterialTheme.colorScheme.onSurface,
+                label = "Select multiple",
+                onClick = {
+                    onDismiss()
+                    onSelect()
                 }
             )
         }

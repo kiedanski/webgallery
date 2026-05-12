@@ -23,15 +23,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -64,7 +73,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.exifinterface.media.ExifInterface
 import com.webgallery.model.SyncStatus
+import com.webgallery.util.FileUtils
 import com.webgallery.model.YearStats
 import com.webgallery.ui.AppViewModelFactory
 import kotlinx.coroutines.launch
@@ -82,30 +93,109 @@ fun GalleryScreen(
     val pendingMutations by viewModel.pendingMutations.collectAsStateWithLifecycle()
     val pendingMutationsByPhoto by viewModel.pendingMutationsByPhoto.collectAsStateWithLifecycle()
     var sheetPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     val gridState = rememberLazyStaggeredGridState()
     val scope = rememberCoroutineScope()
     var scrubberVisible by rememberSaveable { mutableStateOf(false) }
+    val mediaFilter by viewModel.mediaFilter.collectAsStateWithLifecycle()
+    var searchActive by rememberSaveable { mutableStateOf(false) }
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.triggerInitialSync() }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("WebGallery") },
-                actions = {
-                    if (pendingMutations > 0) {
-                        Text(
-                            text = "$pendingMutations pending",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.padding(end = 8.dp)
-                        )
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("${selectedIds.size} selected") },
+                    navigationIcon = {
+                        IconButton(onClick = { selectionMode = false; selectedIds = emptySet() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cancel selection")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            val photos = sections.flatMap { it.photos }.filter { it.id in selectedIds }
+                            photos.forEach { viewModel.toggleFavorite(it) }
+                            selectionMode = false; selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Outlined.FavoriteBorder, "Favorite")
+                        }
+                        IconButton(onClick = {
+                            val photos = sections.flatMap { it.photos }.filter { it.id in selectedIds }
+                            photos.forEach { viewModel.enqueueDelete(it) }
+                            selectionMode = false; selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Outlined.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
+                        }
                     }
-                    SyncStatusIndicator(syncStatus, onRetry = { viewModel.triggerSync() })
-                }
-            )
+                )
+            } else if (searchActive) {
+                TopAppBar(
+                    title = {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { viewModel.setSearchQuery(it) },
+                            placeholder = { Text("Search photos\u2026") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            searchActive = false
+                            viewModel.setSearchQuery("")
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close search")
+                        }
+                    }
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("WebGallery") },
+                    actions = {
+                        FilterChip(
+                            selected = mediaFilter == "PHOTO",
+                            onClick = { viewModel.setMediaFilter(if (mediaFilter == "PHOTO") null else "PHOTO") },
+                            label = { Text("Photos", style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        FilterChip(
+                            selected = mediaFilter == "VIDEO",
+                            onClick = { viewModel.setMediaFilter(if (mediaFilter == "VIDEO") null else "VIDEO") },
+                            label = { Text("Videos", style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        IconButton(onClick = { searchActive = true }) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Search")
+                        }
+                        if (pendingMutations > 0) {
+                            Text(
+                                text = "$pendingMutations pending",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        }
+                        SyncStatusIndicator(syncStatus, onRetry = { viewModel.triggerSync() })
+                    }
+                )
+            }
         }
     ) { padding ->
+        if (searchActive && searchQuery.isNotBlank()) {
+            SearchResultsGrid(
+                results = searchResults,
+                onPhotoClick = onPhotoClick,
+                onPhotoLongPress = { sheetPhoto = it },
+                pendingMutations = pendingMutationsByPhoto,
+                modifier = Modifier.fillMaxSize().padding(padding)
+            )
+        } else {
         val isRefreshing = syncStatus is SyncStatus.Syncing
         PullToRefreshBox(
             isRefreshing = isRefreshing,
@@ -130,11 +220,19 @@ fun GalleryScreen(
                     PhotoGrid(
                         sections = sections,
                         countsFor = { y, m -> viewModel.getCountsForMonth(y, m) },
-                        onPhotoClick = onPhotoClick,
+                        onPhotoClick = { id, isVideo ->
+                            if (selectionMode) {
+                                selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+                                if (selectedIds.isEmpty()) selectionMode = false
+                            } else {
+                                onPhotoClick(id, isVideo)
+                            }
+                        },
                         onPhotoLongPress = { sheetPhoto = it },
                         modifier = Modifier.fillMaxSize(),
                         gridState = gridState,
-                        pendingMutations = pendingMutationsByPhoto
+                        pendingMutations = pendingMutationsByPhoto,
+                        selectedIds = if (selectionMode) selectedIds else emptySet()
                     )
 
                     if (yearStats.size > 1) {
@@ -181,11 +279,13 @@ fun GalleryScreen(
                 }
             }
         }
+        } // end search/gallery toggle
     }
 
     var datePickerPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
     var tagEditorPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
     var deleteConfirmPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
+    var infoPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
 
     sheetPhoto?.let { photo ->
         PhotoActionsSheet(
@@ -193,9 +293,15 @@ fun GalleryScreen(
             onDismiss = { sheetPhoto = null },
             onToggleFavorite = { viewModel.toggleFavorite(photo) },
             onToggleFlag = { viewModel.toggleFlagged(photo) },
+            onShare = { viewModel.sharePhoto(photo) },
+            onShowInfo = { infoPhoto = photo },
             onChangeDate = { datePickerPhoto = photo },
             onEditTags = { tagEditorPhoto = photo },
-            onDelete = { deleteConfirmPhoto = photo }
+            onDelete = { deleteConfirmPhoto = photo },
+            onSelect = {
+                selectionMode = true
+                selectedIds = setOf(photo.id)
+            }
         )
     }
 
@@ -218,6 +324,13 @@ fun GalleryScreen(
                 viewModel.enqueueTagChange(photo, tags)
                 tagEditorPhoto = null
             }
+        )
+    }
+
+    infoPhoto?.let { photo ->
+        PhotoInfoDialog(
+            photo = photo,
+            onDismiss = { infoPhoto = null }
         )
     }
 
@@ -436,4 +549,120 @@ private fun DeleteConfirmDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+@Composable
+private fun SearchResultsGrid(
+    results: List<PhotoEntity>,
+    onPhotoClick: (Long, Boolean) -> Unit,
+    onPhotoLongPress: (PhotoEntity) -> Unit,
+    pendingMutations: Map<Long, String>,
+    modifier: Modifier = Modifier
+) {
+    if (results.isEmpty()) {
+        Box(modifier = modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+            Text("No results", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            items(results, key = { it.id }) { photo ->
+                ThumbnailCard(
+                    photo = photo,
+                    onClick = { onPhotoClick(photo.id, photo.mediaType == "VIDEO") },
+                    onLongClick = { onPhotoLongPress(photo) },
+                    pendingMutationType = pendingMutations[photo.id]
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhotoInfoDialog(
+    photo: PhotoEntity,
+    onDismiss: () -> Unit
+) {
+    val exifData = remember(photo.localFullPath, photo.localThumbnailPath) {
+        val path = photo.localFullPath ?: photo.localThumbnailPath
+        if (path != null) readExifInfo(java.io.File(path)) else emptyMap()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${photo.filenameStem}.${photo.originalExtension}") },
+        text = {
+            Column {
+                InfoRow("Path", photo.remoteOriginalPath)
+                InfoRow("Size", FileUtils.formatFileSize(photo.fileSize))
+                InfoRow("Type", photo.mimeType)
+                InfoRow("Date", photo.lastModified ?: "Unknown")
+                if (!photo.tags.isNullOrBlank()) InfoRow("Tags", photo.tags)
+                if (exifData.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("EXIF", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    exifData.forEach { (key, value) -> InfoRow(key, value) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(100.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+private fun readExifInfo(file: java.io.File): Map<String, String> {
+    if (!file.exists()) return emptyMap()
+    return try {
+        val exif = ExifInterface(file)
+        buildMap {
+            exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)?.let { put("Date taken", it) }
+            exif.getAttribute(ExifInterface.TAG_MAKE)?.let { put("Camera", it) }
+            exif.getAttribute(ExifInterface.TAG_MODEL)?.let { put("Model", it) }
+            val w = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0)
+            val h = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0)
+            if (w > 0 && h > 0) put("Dimensions", "${w} x $h")
+            exif.getAttribute(ExifInterface.TAG_F_NUMBER)?.let { put("Aperture", "f/$it") }
+            exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let {
+                val exp = it.toDoubleOrNull()
+                if (exp != null && exp > 0) {
+                    val display = if (exp < 1) "1/${(1.0 / exp).toInt()}" else "${exp}s"
+                    put("Shutter", display)
+                }
+            }
+            exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { put("ISO", it) }
+            exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let {
+                val parts = it.split("/")
+                if (parts.size == 2) {
+                    val fl = parts[0].toDoubleOrNull()?.div(parts[1].toDoubleOrNull() ?: 1.0)
+                    if (fl != null) put("Focal length", "${fl.toInt()}mm")
+                } else put("Focal length", "${it}mm")
+            }
+            val lat = exif.latLong
+            if (lat != null) put("GPS", "%.5f, %.5f".format(lat[0], lat[1]))
+        }
+    } catch (e: Exception) {
+        emptyMap()
+    }
 }

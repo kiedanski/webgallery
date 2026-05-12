@@ -58,6 +58,7 @@ fun PhotoGrid(
     modifier: Modifier = Modifier,
     gridState: LazyStaggeredGridState = rememberLazyStaggeredGridState(),
     pendingMutations: Map<Long, String> = emptyMap(),
+    selectedIds: Set<Long> = emptySet(),
 ) {
     val configuration = LocalConfiguration.current
     val widthDp = configuration.screenWidthDp
@@ -96,7 +97,8 @@ fun PhotoGrid(
                         onPhotoClick(photo.id, isVideo)
                     },
                     onLongClick = { onPhotoLongPress(photo) },
-                    pendingMutationType = pendingMutations[photo.id]
+                    pendingMutationType = pendingMutations[photo.id],
+                    isSelected = photo.id in selectedIds
                 )
             }
         }

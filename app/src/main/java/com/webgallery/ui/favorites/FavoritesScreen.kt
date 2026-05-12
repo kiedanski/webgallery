@@ -99,6 +99,8 @@ fun FavoritesScreen(
             onDismiss = { sheetPhoto = null },
             onToggleFavorite = { viewModel.toggleFavorite(photo) },
             onToggleFlag = { viewModel.toggleFlagged(photo) },
+            onShare = {},
+            onShowInfo = {},
             onChangeDate = {},
             onEditTags = {},
             onDelete = { viewModel.enqueueDelete(photo) }

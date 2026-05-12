@@ -8,10 +8,13 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okio.Path.Companion.toOkioPath
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.webgallery.data.CredentialStore
 import com.webgallery.data.FolderScanner
 import com.webgallery.data.MutationProcessor
 import com.webgallery.data.PhotoRepository
+import com.webgallery.sync.SyncService
 import com.webgallery.data.SettingsRepository
 import com.webgallery.data.cache.ImageCacheManager
 import com.webgallery.data.cache.ThumbnailStore
@@ -90,5 +93,14 @@ class AppContainer(private val context: Context) {
     init {
         // Restore saved credentials at startup
         credentialStore.loadConfig()?.let { webDavClient.configure(it) }
+
+        // Auto-sync when a mutation is enqueued (if online)
+        photoRepository.onMutationEnqueued = {
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+            if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+                SyncService.start(context)
+            }
+        }
     }
 }

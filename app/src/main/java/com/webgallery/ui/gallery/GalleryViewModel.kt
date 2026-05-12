@@ -14,8 +14,10 @@ import com.webgallery.model.YearStats
 import com.webgallery.sync.SyncService
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
@@ -33,17 +35,32 @@ class GalleryViewModel(
     val yearMonths: StateFlow<List<YearMonth>> = repository.getAllYearMonths()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val sections: StateFlow<List<GallerySection>> = yearMonths
-        .flatMapLatest { months ->
+    // Filter: null = all, "PHOTO" = photos only, "VIDEO" = videos only
+    private val _mediaFilter = MutableStateFlow<String?>(null)
+    val mediaFilter: StateFlow<String?> = _mediaFilter.asStateFlow()
+
+    fun setMediaFilter(filter: String?) {
+        _mediaFilter.value = filter
+    }
+
+    val sections: StateFlow<List<GallerySection>> = combine(
+        yearMonths.flatMapLatest { months ->
             if (months.isEmpty()) flowOf(emptyList())
             else combine(months.map { ym ->
                 repository.getPhotosAndVideosByMonth(ym.year, ym.month)
             }) { arrays ->
                 months.mapIndexed { index, ym ->
                     GallerySection(ym, arrays[index])
-                }.filter { it.photos.isNotEmpty() }
+                }
             }
-        }
+        },
+        _mediaFilter
+    ) { allSections, filter ->
+        if (filter == null) allSections.filter { it.photos.isNotEmpty() }
+        else allSections.map { section ->
+            section.copy(photos = section.photos.filter { it.mediaType == filter })
+        }.filter { it.photos.isNotEmpty() }
+    }
         .debounce(300)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -86,6 +103,22 @@ class GalleryViewModel(
         }
     }
 
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    @OptIn(FlowPreview::class)
+    val searchResults: StateFlow<List<PhotoEntity>> = _searchQuery
+        .debounce(300)
+        .flatMapLatest { query ->
+            if (query.isBlank()) flowOf(emptyList())
+            else repository.search(query)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
     fun enqueueDateChange(photo: PhotoEntity, exifDateStr: String) {
         viewModelScope.launch {
             repository.enqueueDateChange(photo, exifDateStr)
@@ -95,6 +128,16 @@ class GalleryViewModel(
     fun enqueueTagChange(photo: PhotoEntity, tags: String) {
         viewModelScope.launch {
             repository.enqueueTagChange(photo, tags)
+        }
+    }
+
+    fun sharePhoto(photo: PhotoEntity) {
+        viewModelScope.launch {
+            val limit = repository.getCacheLimitBytes()
+            val file = repository.ensureFullImage(photo, limit)
+            if (file != null) {
+                com.webgallery.util.ShareUtils.shareFile(app, file, photo.mimeType)
+            }
         }
     }
 

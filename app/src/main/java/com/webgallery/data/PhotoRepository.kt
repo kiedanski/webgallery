@@ -29,6 +29,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +52,9 @@ class PhotoRepository(
     private val settingsRepository: SettingsRepository
 ) {
 
+    /** Called after a mutation is enqueued. Set by the app layer to trigger sync. */
+    var onMutationEnqueued: (() -> Unit)? = null
+
     private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
 
@@ -70,6 +74,8 @@ class PhotoRepository(
     fun getYearStats(): Flow<List<YearStats>> = photoDao.getYearStats()
     fun getErrorsForPhoto(photoId: Long): Flow<List<PhotoErrorEntity>> =
         photoErrorDao.getErrorsForPhoto(photoId)
+    suspend fun getCacheLimitBytes(): Long = settingsRepository.cacheLimitBytes.first()
+    fun search(query: String): Flow<List<PhotoEntity>> = photoDao.search(query)
     fun getPhotoById(id: Long): Flow<PhotoEntity?> = photoDao.getPhotoById(id)
     suspend fun getPhotoOnce(id: Long): PhotoEntity? = photoDao.getPhotoByIdOnce(id)
 
@@ -96,6 +102,7 @@ class PhotoRepository(
                 updatedAt = System.currentTimeMillis()
             )
         )
+        onMutationEnqueued?.invoke()
     }
 
     suspend fun enqueueTagChange(photo: PhotoEntity, tags: String) = withContext(Dispatchers.IO) {
@@ -112,6 +119,7 @@ class PhotoRepository(
         )
         // Optimistic local update
         photoDao.updateTags(photo.id, tags.ifBlank { null })
+        onMutationEnqueued?.invoke()
     }
 
     suspend fun enqueueDelete(photo: PhotoEntity) = withContext(Dispatchers.IO) {
@@ -127,6 +135,7 @@ class PhotoRepository(
         )
         // Optimistic local delete
         photoDao.upsertPhoto(photo.copy(isDeleted = true, updatedAt = System.currentTimeMillis()))
+        onMutationEnqueued?.invoke()
     }
 
     suspend fun retryMutation(mutationId: Long) = withContext(Dispatchers.IO) {

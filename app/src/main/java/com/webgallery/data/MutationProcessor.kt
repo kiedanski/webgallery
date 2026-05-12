@@ -102,6 +102,15 @@ class MutationProcessor(
     }
 
     private suspend fun processDelete(mutation: MutationEntity) {
-        webDavClient.delete("/dav/photos/${mutation.remotePath}").getOrThrow()
+        val result = webDavClient.delete("/dav/photos/${mutation.remotePath}")
+        if (result.isFailure) {
+            val err = result.exceptionOrNull()
+            // 404 = already gone, treat as success
+            if (err is WebDavClient.HttpException && err.code == 404) {
+                Log.d(TAG, "DELETE 404 for ${mutation.remotePath} — already gone")
+            } else {
+                throw err!!
+            }
+        }
     }
 }

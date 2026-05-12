@@ -66,6 +66,14 @@ interface PhotoDao {
     """)
     fun getYearStats(): Flow<List<YearStats>>
 
+    @Query("""
+        SELECT * FROM photos WHERE is_deleted = 0 AND (
+            filename_stem LIKE '%' || :query || '%' OR
+            tags LIKE '%' || :query || '%'
+        ) ORDER BY year DESC, month DESC, filename_stem ASC LIMIT :limit
+    """)
+    fun search(query: String, limit: Int = 200): Flow<List<PhotoEntity>>
+
     @Query("SELECT * FROM photos WHERE remote_thumbnail_path = :path LIMIT 1")
     suspend fun findByThumbnailPath(path: String): PhotoEntity?
 

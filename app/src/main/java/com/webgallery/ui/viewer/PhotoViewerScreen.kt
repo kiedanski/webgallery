@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,11 +66,16 @@ fun PhotoViewerScreen(
     LaunchedEffect(photoId) { viewModel.setInitialPhoto(photoId) }
 
     val view = LocalView.current
-    LaunchedEffect(Unit) {
-        val window = (view.context as? android.app.Activity)?.window ?: return@LaunchedEffect
-        WindowCompat.getInsetsController(window, view).apply {
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            hide(WindowInsetsCompat.Type.systemBars())
+    DisposableEffect(Unit) {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            WindowCompat.getInsetsController(window, view).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            restoreSystemBars(view)
         }
     }
 

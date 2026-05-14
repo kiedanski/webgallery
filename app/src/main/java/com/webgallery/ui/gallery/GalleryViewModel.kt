@@ -73,6 +73,9 @@ class GalleryViewModel(
     val pendingMutations: StateFlow<Int> = repository.getPendingMutationCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    val totalCount: StateFlow<Int> = repository.getTotalCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     val syncStatus: StateFlow<SyncStatus> = repository.syncStatus
 
     private var initialSyncTriggered = false

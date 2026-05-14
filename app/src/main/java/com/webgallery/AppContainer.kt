@@ -96,10 +96,14 @@ class AppContainer(private val context: Context) {
 
         // Auto-sync when a mutation is enqueued (if online)
         photoRepository.onMutationEnqueued = {
-            val cm = context.getSystemService(ConnectivityManager::class.java)
-            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
-            if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
-                SyncService.start(context)
+            try {
+                val cm = context.getSystemService(ConnectivityManager::class.java)
+                val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) {
+                    SyncService.start(context)
+                }
+            } catch (_: Exception) {
+                // ForegroundServiceStartNotAllowedException on Android 12+ when backgrounded
             }
         }
     }

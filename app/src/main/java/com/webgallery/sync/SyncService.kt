@@ -55,7 +55,11 @@ class SyncService : Service() {
                     updateNotification(current, total)
                 }
                 // After sync, process any pending mutations
+                val nm = getSystemService(NotificationManager::class.java)
+                nm.notify(NOTIFICATION_ID, buildNotification("Processing queued changes\u2026", 0, 0))
                 container.mutationProcessor.processQueue()
+                // After mutations, trigger upload if there are watched folders
+                UploadService.start(applicationContext)
             } catch (e: Exception) {
                 Log.e("SyncService", "Sync failed", e)
             } finally {

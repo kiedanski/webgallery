@@ -93,15 +93,23 @@ fun GalleryScreen(
     val pendingMutations by viewModel.pendingMutations.collectAsStateWithLifecycle()
     val pendingMutationsByPhoto by viewModel.pendingMutationsByPhoto.collectAsStateWithLifecycle()
     var sheetPhoto by remember { mutableStateOf<PhotoEntity?>(null) }
-    var selectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(setOf<Long>()) }
     val gridState = rememberLazyStaggeredGridState()
     val scope = rememberCoroutineScope()
     var scrubberVisible by rememberSaveable { mutableStateOf(false) }
+    val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val mediaFilter by viewModel.mediaFilter.collectAsStateWithLifecycle()
     var searchActive by rememberSaveable { mutableStateOf(false) }
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+
+    if (selectionMode) {
+        androidx.activity.compose.BackHandler {
+            selectionMode = false
+            selectedIds = emptySet()
+        }
+    }
 
     LaunchedEffect(Unit) { viewModel.triggerInitialSync() }
 
@@ -155,7 +163,18 @@ fun GalleryScreen(
                 )
             } else {
                 TopAppBar(
-                    title = { Text("WebGallery") },
+                    title = {
+                    Column {
+                        Text("WebGallery", style = MaterialTheme.typography.titleLarge)
+                        if (totalCount > 0) {
+                            Text(
+                                "$totalCount photos",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                     actions = {
                         FilterChip(
                             selected = mediaFilter == "PHOTO",

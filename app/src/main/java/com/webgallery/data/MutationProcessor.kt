@@ -21,6 +21,7 @@ class MutationProcessor(
     companion object {
         private const val TAG = "MutationProcessor"
         const val FRESHNESS_THRESHOLD_MS = 10 * 60 * 1000L
+        const val MAX_RETRIES = 5
     }
 
     suspend fun processQueue() {
@@ -29,14 +30,20 @@ class MutationProcessor(
 
         Log.d(TAG, "Processing ${pending.size} pending mutations")
 
-        // Check sync freshness
+        // Check sync freshness — skip queue if sync is too stale (prevents conflicts)
         val lastSync = settingsRepository.getLastSyncTimestamp()
         if (System.currentTimeMillis() - lastSync > FRESHNESS_THRESHOLD_MS) {
-            Log.d(TAG, "Sync is stale, syncing first")
-            photoRepository.sync()
+            Log.d(TAG, "Sync is stale (>10min), skipping queue until next fresh sync")
+            return
         }
 
-        for (mutation in pending) {
+        val total = pending.size
+        for ((index, mutation) in pending.withIndex()) {
+            if (mutation.retryCount >= MAX_RETRIES) {
+                Log.w(TAG, "Mutation ${mutation.id} exceeded $MAX_RETRIES retries, abandoning")
+                mutationDao.delete(mutation.id)
+                continue
+            }
             mutationDao.updateStatus(mutation.id, MutationEntity.STATUS_PROCESSING)
             try {
                 when (mutation.mutationType) {
@@ -46,9 +53,11 @@ class MutationProcessor(
                     else -> Log.w(TAG, "Unknown mutation type: ${mutation.mutationType}")
                 }
                 mutationDao.delete(mutation.id)
-                Log.d(TAG, "Mutation ${mutation.id} (${mutation.mutationType}) completed")
+                if ((index + 1) % 50 == 0 || index == total - 1) {
+                    Log.d(TAG, "Mutations: ${index + 1}/$total completed")
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Mutation ${mutation.id} failed", e)
+                Log.e(TAG, "Mutation ${mutation.id} (${mutation.mutationType}) failed: ${e.message}")
                 mutationDao.updateStatus(mutation.id, MutationEntity.STATUS_FAILED, e.message)
             }
         }
@@ -111,6 +120,11 @@ class MutationProcessor(
             } else {
                 throw err!!
             }
+        }
+        // Mark locally deleted now that server confirmed
+        val photo = photoDao.getPhotoByIdOnce(mutation.photoId)
+        if (photo != null) {
+            photoDao.upsertPhoto(photo.copy(isDeleted = true, updatedAt = System.currentTimeMillis()))
         }
     }
 }

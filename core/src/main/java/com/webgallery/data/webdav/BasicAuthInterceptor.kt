@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicReference
 class BasicAuthInterceptor : Interceptor {
 
     private val credentials = AtomicReference<String?>(null)
+    private val serverHost = AtomicReference<String?>(null)
 
     fun setCredentials(username: String?, password: String?) {
         credentials.set(
@@ -18,9 +19,16 @@ class BasicAuthInterceptor : Interceptor {
         )
     }
 
+    fun setServerHost(host: String?) {
+        serverHost.set(host)
+    }
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val auth = credentials.get()
-        val request = if (auth != null) {
+        val host = serverHost.get()
+        val requestHost = chain.request().url.host
+        // Only attach credentials to requests going to the configured server
+        val request = if (auth != null && host != null && requestHost == host) {
             chain.request().newBuilder().header("Authorization", auth).build()
         } else {
             chain.request()

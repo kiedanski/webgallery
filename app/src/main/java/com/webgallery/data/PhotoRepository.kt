@@ -74,6 +74,7 @@ class PhotoRepository(
     fun getYearStats(): Flow<List<YearStats>> = photoDao.getYearStats()
     fun getErrorsForPhoto(photoId: Long): Flow<List<PhotoErrorEntity>> =
         photoErrorDao.getErrorsForPhoto(photoId)
+    fun getTotalCount(): Flow<Int> = photoDao.getTotalCount()
     suspend fun getCacheLimitBytes(): Long = settingsRepository.cacheLimitBytes.first()
     fun search(query: String): Flow<List<PhotoEntity>> = photoDao.search(query)
     fun getPhotoById(id: Long): Flow<PhotoEntity?> = photoDao.getPhotoById(id)
@@ -91,6 +92,7 @@ class PhotoRepository(
     fun getAllMutations(): Flow<List<MutationEntity>> = mutationDao.getAll()
 
     suspend fun enqueueDateChange(photo: PhotoEntity, exifDateStr: String) = withContext(Dispatchers.IO) {
+        if (mutationDao.countPendingForPhoto(photo.id, MutationEntity.TYPE_CHANGE_DATE) > 0) return@withContext
         val payload = org.json.JSONObject().put("date", exifDateStr).toString()
         mutationDao.insert(
             MutationEntity(
@@ -106,6 +108,7 @@ class PhotoRepository(
     }
 
     suspend fun enqueueTagChange(photo: PhotoEntity, tags: String) = withContext(Dispatchers.IO) {
+        if (mutationDao.countPendingForPhoto(photo.id, MutationEntity.TYPE_SET_TAGS) > 0) return@withContext
         val payload = org.json.JSONObject().put("tags", tags).toString()
         mutationDao.insert(
             MutationEntity(
@@ -123,6 +126,7 @@ class PhotoRepository(
     }
 
     suspend fun enqueueDelete(photo: PhotoEntity) = withContext(Dispatchers.IO) {
+        if (mutationDao.countPendingForPhoto(photo.id, MutationEntity.TYPE_DELETE) > 0) return@withContext
         mutationDao.insert(
             MutationEntity(
                 photoId = photo.id,
@@ -133,8 +137,7 @@ class PhotoRepository(
                 updatedAt = System.currentTimeMillis()
             )
         )
-        // Optimistic local delete
-        photoDao.upsertPhoto(photo.copy(isDeleted = true, updatedAt = System.currentTimeMillis()))
+        // Don't hide — the trash overlay on the thumbnail shows it's pending deletion
         onMutationEnqueued?.invoke()
     }
 
@@ -332,6 +335,8 @@ class PhotoRepository(
 
         val toUpsert = mutableListOf<PhotoEntity>()
         val keepIds = mutableListOf<Long>()
+        val processedThumbPaths = mutableSetOf<String>()
+        var newInsertCount = 0
         val now = System.currentTimeMillis()
 
         for (thumb in thumbResources) {
@@ -342,9 +347,11 @@ class PhotoRepository(
             val ext = FileUtils.extensionOf(original.name)
             val remoteThumbPath = "_thumbnails/$year/$monthStr/${thumb.name}"
             val remoteOriginalPath = "$year/$monthStr/${original.name}"
+            processedThumbPaths += remoteThumbPath
 
             val existing = existingByThumbPath[remoteThumbPath]
             if (existing == null) {
+                newInsertCount++
                 toUpsert += PhotoEntity(
                     remoteThumbnailPath = remoteThumbPath,
                     remoteOriginalPath = remoteOriginalPath,
@@ -388,15 +395,27 @@ class PhotoRepository(
             photoDao.upsertPhotos(toUpsert)
         }
 
-        // Collect IDs for newly inserted photos (they didn't have IDs before upsert)
-        if (keepIds.size < thumbResources.size) {
+        // If new photos were inserted, re-query to get their auto-generated IDs
+        // Only include photos whose thumbnails were actually seen on the server
+        if (newInsertCount > 0) {
             val allAfter = photoDao.getAllForMonth(year, month)
             keepIds.clear()
-            keepIds += allAfter.filter { !it.isDeleted || toUpsert.any { u -> u.remoteThumbnailPath == it.remoteThumbnailPath } }
+            keepIds += allAfter
+                .filter { it.remoteThumbnailPath in processedThumbPaths }
                 .map { it.id }
         }
 
-        photoDao.markDeletedByMonth(year, month, keepIds)
+        // Mark photos NOT seen on server as deleted — chunk to avoid SQLite variable limit
+        if (keepIds.size <= 900) {
+            photoDao.markDeletedByMonth(year, month, keepIds)
+        } else {
+            // For months with 900+ photos, mark by exclusion using the processed paths
+            val allInMonth = photoDao.getAllForMonth(year, month)
+            val toDelete = allInMonth.filter { it.remoteThumbnailPath !in processedThumbPaths && !it.isDeleted }
+            for (photo in toDelete) {
+                photoDao.upsertPhoto(photo.copy(isDeleted = true, updatedAt = now))
+            }
+        }
     }
 
     private suspend fun downloadMissingThumbnails(onDownloadProgress: ((Int, Int) -> Unit)? = null) = coroutineScope {
@@ -520,8 +539,8 @@ class PhotoRepository(
 
     suspend fun evictCacheIfNeeded(limitBytes: Long) = withContext(Dispatchers.IO) {
         val evicted = imageCacheManager.evictIfNeeded(limitBytes)
-        if (evicted.isNotEmpty()) {
-            photoDao.clearAllLocalFullPaths()
+        for (path in evicted) {
+            photoDao.clearLocalFullPathByPath(path)
         }
     }
 

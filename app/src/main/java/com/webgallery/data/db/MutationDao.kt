@@ -28,6 +28,9 @@ interface MutationDao {
     @Query("SELECT photo_id, mutation_type FROM pending_mutations WHERE status IN ('PENDING', 'PROCESSING', 'FAILED')")
     fun getPendingPhotoMutations(): Flow<List<PendingMutation>>
 
+    @Query("SELECT COUNT(*) FROM pending_mutations WHERE photo_id = :photoId AND mutation_type = :type AND status IN ('PENDING', 'PROCESSING')")
+    suspend fun countPendingForPhoto(photoId: Long, type: String): Int
+
     @Insert
     suspend fun insert(mutation: MutationEntity): Long
 

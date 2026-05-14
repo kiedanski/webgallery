@@ -74,6 +74,9 @@ interface PhotoDao {
     """)
     fun search(query: String, limit: Int = 200): Flow<List<PhotoEntity>>
 
+    @Query("SELECT COUNT(*) FROM photos WHERE is_deleted = 0")
+    fun getTotalCount(): Flow<Int>
+
     @Query("SELECT * FROM photos WHERE remote_thumbnail_path = :path LIMIT 1")
     suspend fun findByThumbnailPath(path: String): PhotoEntity?
 
@@ -113,6 +116,9 @@ interface PhotoDao {
 
     @Query("UPDATE photos SET local_full_path = NULL WHERE local_full_path IS NOT NULL")
     suspend fun clearAllLocalFullPaths()
+
+    @Query("UPDATE photos SET local_full_path = NULL WHERE local_full_path = :path")
+    suspend fun clearLocalFullPathByPath(path: String)
 
     @Query("UPDATE photos SET thumbnail_downloaded = 0, local_thumbnail_path = NULL")
     suspend fun clearAllThumbnailFlags()

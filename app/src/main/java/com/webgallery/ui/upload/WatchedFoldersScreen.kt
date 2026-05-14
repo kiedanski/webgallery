@@ -246,9 +246,13 @@ private fun FolderCard(
     val pending = uploads.count { it.status == UploadEntity.STATUS_PENDING }
     val uploaded = uploads.count { it.status in listOf(UploadEntity.STATUS_UPLOADED, UploadEntity.STATUS_DELETED) }
     val failed = uploads.count { it.status == UploadEntity.STATUS_FAILED }
-    val dirExists = remember(folder.path) { File(folder.path).exists() }
-    val fileCount = remember(folder.path) {
-        File(folder.path).listFiles()?.count { it.isFile } ?: 0
+    var dirExists by remember { mutableStateOf(true) }
+    var fileCount by remember { mutableStateOf(0) }
+    LaunchedEffect(folder.path) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            dirExists = File(folder.path).exists()
+            fileCount = File(folder.path).listFiles()?.count { it.isFile } ?: 0
+        }
     }
 
     Card(

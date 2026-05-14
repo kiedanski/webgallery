@@ -27,8 +27,10 @@ class WebDavClient(
         this.config = config
         if (config != null) {
             authInterceptor.setCredentials(config.username, config.password)
+            authInterceptor.setServerHost(java.net.URI(config.baseUrl).host)
         } else {
             authInterceptor.setCredentials(null, null)
+            authInterceptor.setServerHost(null)
         }
     }
 
@@ -58,6 +60,8 @@ class WebDavClient(
                 if (response.code == 401) throw UnauthorizedException()
                 if (response.code != 207) throw IOException("PROPFIND failed: ${response.code}")
                 val body = response.body ?: throw IOException("Empty response body")
+                val contentLength = body.contentLength()
+                if (contentLength > MAX_PROPFIND_BYTES) throw IOException("PROPFIND response too large: $contentLength bytes")
                 WebDavParser.parseMultistatus(body.byteStream())
                     .map { normalizeResource(it, cfg.baseUrl) }
             }
@@ -167,11 +171,17 @@ class WebDavClient(
         }
     }
 
+    private fun validatePropKey(key: String) {
+        require(key.matches(Regex("^[a-zA-Z_][a-zA-Z0-9_-]*$"))) { "Invalid property name: $key" }
+    }
+
     private fun buildProppatchBody(
         setProps: Map<String, String>,
         removeProps: List<String>,
         namespace: String
     ): String {
+        setProps.keys.forEach { validatePropKey(it) }
+        removeProps.forEach { validatePropKey(it) }
         val sb = StringBuilder()
         sb.append("""<?xml version="1.0" encoding="UTF-8"?>""")
         sb.append("""<d:propertyupdate xmlns:d="DAV:" xmlns:app="$namespace">""")
@@ -238,6 +248,11 @@ class WebDavClient(
             .build()
     }
 
+    private fun validatePath(path: String) {
+        require(!path.contains("..")) { "Path traversal detected: $path" }
+        require(!path.contains('\u0000')) { "Null byte in path: $path" }
+    }
+
     private fun normalizeResource(resource: DavResource, baseUrl: String): DavResource {
         val href = resource.href
         val withoutHost = if (href.startsWith("http://") || href.startsWith("https://")) {
@@ -259,6 +274,7 @@ class WebDavClient(
             .removePrefix("/")
             .removePrefix("dav/photos/")
             .removePrefix("dav/photos")
+        validatePath(relative)
         return resource.copy(href = relative)
     }
 
@@ -268,6 +284,7 @@ class WebDavClient(
     companion object {
         const val PHOTOS_BASE_PATH = "/dav/photos/"
         const val WEBGALLERY_NS = "http://webgallery.app/ns/"
+        const val MAX_PROPFIND_BYTES = 10L * 1024 * 1024 // 10 MB
 
         private const val MINIMAL_PROPFIND_BODY = """<?xml version="1.0" encoding="UTF-8"?>
 <d:propfind xmlns:d="DAV:">

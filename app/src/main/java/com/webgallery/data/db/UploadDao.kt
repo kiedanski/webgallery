@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface UploadDao {
 
-    @Query("SELECT * FROM uploads WHERE status = 'PENDING' ORDER BY created_at ASC")
+    @Query("SELECT * FROM uploads WHERE status IN ('PENDING', 'UPLOADING') ORDER BY created_at ASC")
     suspend fun getPending(): List<UploadEntity>
 
     @Query("SELECT COUNT(*) FROM uploads WHERE status IN ('PENDING', 'UPLOADING')")

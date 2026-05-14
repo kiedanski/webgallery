@@ -17,7 +17,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -107,7 +107,7 @@ fun PhotoGrid(
 
 @Composable
 private fun MonthHeader(yearMonth: YearMonth, countsFlow: Flow<PhotoCounts>) {
-    val counts by countsFlow.collectAsState(initial = PhotoCounts())
+    val counts by countsFlow.collectAsStateWithLifecycle(initialValue = PhotoCounts())
     Row(
         modifier = Modifier
             .fillMaxWidth()

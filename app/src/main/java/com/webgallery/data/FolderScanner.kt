@@ -35,9 +35,9 @@ class FolderScanner(
         val now = System.currentTimeMillis()
         val newFiles = mutableListOf<UploadEntity>()
 
-        dir.listFiles()?.filter { f ->
+        dir.walkTopDown().filter { f ->
             f.isFile && isMediaFile(f) && f.absolutePath !in knownPaths
-        }?.forEach { file ->
+        }.forEach { file ->
             val entity = UploadEntity(
                 folderId = folderId,
                 localPath = file.absolutePath,

@@ -14,6 +14,9 @@ interface UploadDao {
     @Query("SELECT * FROM uploads WHERE status IN ('PENDING', 'UPLOADING') ORDER BY created_at ASC")
     suspend fun getPending(): List<UploadEntity>
 
+    @Query("SELECT COUNT(*) FROM uploads WHERE status = 'UPLOADED'")
+    fun getUploadedNotDeletedCount(): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM uploads WHERE status IN ('PENDING', 'UPLOADING')")
     fun getPendingCount(): Flow<Int>
 

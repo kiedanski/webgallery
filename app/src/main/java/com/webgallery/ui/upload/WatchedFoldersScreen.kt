@@ -153,7 +153,19 @@ fun WatchedFoldersScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (browsingFolder != null) browsingFolder!!.displayName else "Watched Folders") },
+                title = {
+                    val cleanupCount by viewModel.needsCleanupCount.collectAsStateWithLifecycle()
+                    Column {
+                        Text(if (browsingFolder != null) browsingFolder!!.displayName else "Watched Folders")
+                        if (browsingFolder == null && cleanupCount > 0) {
+                            Text(
+                                "$cleanupCount uploaded, tap broom to free space",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = {
                         if (browsingFolder != null) browsingFolder = null else onClose()
@@ -248,7 +260,9 @@ private fun FolderCard(
     val failed = uploads.count { it.status == UploadEntity.STATUS_FAILED }
     var dirExists by remember { mutableStateOf(true) }
     var fileCount by remember { mutableStateOf(0) }
-    LaunchedEffect(folder.path) {
+    // Re-count files when upload statuses change (e.g., after cleanup deletes local files)
+    val uploadCount = uploads.size
+    LaunchedEffect(folder.path, uploadCount) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             dirExists = File(folder.path).exists()
             fileCount = File(folder.path).listFiles()?.count { it.isFile } ?: 0

@@ -106,12 +106,14 @@ class UploadService : Service() {
                         Log.d(TAG, "Uploaded ${upload.fileName}")
 
                         if (folder?.deleteAfterUpload == true) {
-                            val deleted = deleteMediaFile(file)
-                            if (deleted) {
+                            // Try direct delete (works for app-owned files only)
+                            if (file.delete()) {
                                 uploadDao.markDeleted(upload.id)
                                 Log.d(TAG, "Deleted local ${upload.fileName}")
                             } else {
-                                Log.w(TAG, "Could not delete local ${upload.fileName}")
+                                // Can't delete other apps' files from a service —
+                                // user needs to use the cleanup button (requires system dialog)
+                                Log.d(TAG, "Uploaded ${upload.fileName} — use cleanup button to free local storage")
                             }
                         }
                     } else {

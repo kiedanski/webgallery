@@ -44,6 +44,9 @@ class WatchedFoldersViewModel(
     val folders: StateFlow<List<WatchedFolderEntity>> = watchedFolderDao.getAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val needsCleanupCount: StateFlow<Int> = uploadDao.getUploadedNotDeletedCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     // Emits an IntentSender when cleanup needs user confirmation (Android 11+)
     private val _deleteRequest = MutableStateFlow<IntentSender?>(null)
     val deleteRequest: StateFlow<IntentSender?> = _deleteRequest.asStateFlow()

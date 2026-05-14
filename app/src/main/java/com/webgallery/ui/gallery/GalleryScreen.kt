@@ -164,43 +164,46 @@ fun GalleryScreen(
             } else {
                 TopAppBar(
                     title = {
-                    Column {
-                        Text("WebGallery", style = MaterialTheme.typography.titleLarge)
-                        if (totalCount > 0) {
-                            Text(
-                                "$totalCount photos",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("WebGallery", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.width(8.dp))
+                                SyncStatusIndicator(syncStatus, onRetry = { viewModel.triggerSync() })
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (totalCount > 0) {
+                                    Text(
+                                        "$totalCount photos",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (pendingMutations > 0) {
+                                    Text(
+                                        " \u00b7 $pendingMutations pending",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
+                            }
                         }
-                    }
-                },
+                    },
                     actions = {
                         FilterChip(
                             selected = mediaFilter == "PHOTO",
                             onClick = { viewModel.setMediaFilter(if (mediaFilter == "PHOTO") null else "PHOTO") },
-                            label = { Text("Photos", style = MaterialTheme.typography.labelSmall) },
+                            label = { Text("P", style = MaterialTheme.typography.labelSmall) },
                             modifier = Modifier.height(28.dp)
                         )
-                        Spacer(Modifier.width(4.dp))
                         FilterChip(
                             selected = mediaFilter == "VIDEO",
                             onClick = { viewModel.setMediaFilter(if (mediaFilter == "VIDEO") null else "VIDEO") },
-                            label = { Text("Videos", style = MaterialTheme.typography.labelSmall) },
+                            label = { Text("V", style = MaterialTheme.typography.labelSmall) },
                             modifier = Modifier.height(28.dp)
                         )
                         IconButton(onClick = { searchActive = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search")
                         }
-                        if (pendingMutations > 0) {
-                            Text(
-                                text = "$pendingMutations pending",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
-                        }
-                        SyncStatusIndicator(syncStatus, onRetry = { viewModel.triggerSync() })
                     }
                 )
             }
